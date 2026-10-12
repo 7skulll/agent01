@@ -1,4 +1,6 @@
-# 企业知识库 RAG：FastAPI + LangChain
+# agent01：企业知识库 RAG
+
+agent program · FastAPI + LangChain
 
 本项目独立于相邻的 `ragflow-main`。第一步完成框架与可测试的问答编排，后续接入实际文档、检索存储和云端模型。
 
@@ -14,7 +16,8 @@
 ## 启动
 
 ```bash
-cd langchain-rag
+git clone https://github.com/7skulll/agent01.git
+cd agent01
 uv sync
 uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
