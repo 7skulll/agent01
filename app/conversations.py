@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -11,10 +12,6 @@ class ConversationNotFoundError(RuntimeError):
     pass
 
 
-class ConversationConflictError(RuntimeError):
-    pass
-
-
 class ConversationRepository:
     """Session metadata; messages and tool states live in LangGraph checkpoints."""
 
@@ -22,28 +19,57 @@ class ConversationRepository:
         self.connection = connection
         self.lock = asyncio.Lock()
 
+    @asynccontextmanager
+    async def transaction(self):
+        async with self.lock:
+            try:
+                await self.connection.execute("BEGIN IMMEDIATE")
+                yield
+                await self.connection.commit()
+            except BaseException:
+                await self.connection.rollback()
+                raise
+
     async def setup(self):
         self.connection.row_factory = aiosqlite.Row
         await self.connection.execute("PRAGMA busy_timeout = 5000")
-        await self.connection.execute(
-            "CREATE TABLE IF NOT EXISTS conversations ("
-            "thread_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
-            "status TEXT NOT NULL CHECK (status IN ('ready', 'running', 'failed')))"
-        )
-        await self.connection.execute(
-            "UPDATE conversations SET status='failed' WHERE status='running'"
-        )
-        await self.connection.commit()
+        async with self.transaction():
+            await self.connection.execute(
+                "CREATE TABLE IF NOT EXISTS conversations ("
+                "thread_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
+                "status TEXT NOT NULL CHECK (status IN ('ready', 'running', 'failed')))"
+            )
+            async with self.connection.execute("PRAGMA table_info(conversations)") as cursor:
+                columns = {row["name"] for row in await cursor.fetchall()}
+            for name in (
+                "checkpoint_run_id",
+                "checkpoint_id",
+                "last_error_code",
+                "request_id",
+                "active_run_id",
+            ):
+                if name not in columns:
+                    await self.connection.execute(
+                        f"ALTER TABLE conversations ADD COLUMN {name} TEXT"
+                    )
+            async with self.connection.execute(
+                "SELECT thread_id FROM conversations WHERE checkpoint_run_id IS NULL"
+            ) as cursor:
+                self.legacy_ids = [row["thread_id"] for row in await cursor.fetchall()]
+            await self.connection.execute(
+                "UPDATE conversations SET status='failed', last_error_code='process_interrupted' "
+                "WHERE status='running' AND active_run_id IS NULL"
+            )
 
     async def create(self) -> Conversation:
         now = datetime.now(timezone.utc).isoformat()
         item = Conversation(thread_id=uuid4(), created_at=now, updated_at=now, status="ready")
-        async with self.lock:
+        async with self.transaction():
             await self.connection.execute(
-                "INSERT INTO conversations VALUES (?, ?, ?, ?)",
+                "INSERT INTO conversations (thread_id, created_at, updated_at, status) "
+                "VALUES (?, ?, ?, ?)",
                 (str(item.thread_id), now, now, "ready"),
             )
-            await self.connection.commit()
         return item
 
     async def get(self, thread_id: str) -> Conversation:
@@ -64,25 +90,35 @@ class ConversationRepository:
             ) as cursor:
                 return [Conversation(**dict(row)) for row in await cursor.fetchall()]
 
-    async def claim(self, thread_id: str):
-        async with self.lock:
-            cursor = await self.connection.execute(
-                "UPDATE conversations SET status='running' WHERE thread_id=? AND status='ready'",
-                (thread_id,),
-            )
-            await self.connection.commit()
-            changed = cursor.rowcount
-            await cursor.close()
-        if not changed:
-            item = await self.get(thread_id)
-            if item.status == "failed":
-                raise ConversationConflictError("上次调用未完成，请新建会话；失败历史仍可查看。")
-            raise ConversationConflictError("该会话正在处理请求，请等待完成。")
+    async def prune_unreferenced_runs(self):
+        """Startup only: no live requests exist after legacy checkpoint migration."""
+        async with self.transaction():
+            for table in ("writes", "checkpoints"):
+                await self.connection.execute(
+                    f"DELETE FROM {table} WHERE thread_id NOT IN "
+                    "(SELECT checkpoint_run_id FROM conversations "
+                    "WHERE checkpoint_run_id IS NOT NULL UNION SELECT run_id FROM runs)"
+                )
 
-    async def finish(self, thread_id: str, status: str):
+    async def checkpoint_config(self, thread_id: str):
         async with self.lock:
+            async with self.connection.execute(
+                "SELECT checkpoint_run_id, checkpoint_id FROM conversations WHERE thread_id=?",
+                (thread_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+        if row and row["checkpoint_run_id"]:
+            return {
+                "configurable": {
+                    "thread_id": row["checkpoint_run_id"],
+                    "checkpoint_id": row["checkpoint_id"],
+                }
+            }
+        return None
+
+    async def migrate_checkpoint(self, thread_id: str, checkpoint_id: str):
+        async with self.transaction():
             await self.connection.execute(
-                "UPDATE conversations SET status=?, updated_at=? WHERE thread_id=?",
-                (status, datetime.now(timezone.utc).isoformat(), thread_id),
+                "UPDATE conversations SET checkpoint_run_id=?, checkpoint_id=? WHERE thread_id=?",
+                (thread_id, checkpoint_id, thread_id),
             )
-            await self.connection.commit()
