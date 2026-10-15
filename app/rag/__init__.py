@@ -1,1 +1,1 @@
-"""File ingestion building blocks; parsing and retrieval are not enabled yet."""
+"""知识库上传、结构解析、向量化与混合检索。"""

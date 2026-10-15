@@ -16,6 +16,7 @@ from app.errors import ChatError
 from app.rag.storage import (
     ALLOWED_EXTENSIONS,
     MAX_FILE_BYTES,
+    MAX_STORED_FILE_BYTES,
     EmptyFileError,
     FileTooLargeError,
     Storage,
@@ -100,25 +101,54 @@ class FileRepository:
     def __init__(self, database: ConversationRepository):
         self.database = database
 
+    @staticmethod
+    def _create_files_sql() -> str:
+        # 数据库只做宽松兜底（MAX_STORED_FILE_BYTES），真实 50 MiB 限额在接收期用
+        # MAX_FILE_BYTES 控制，避免以后调整上限都要重建带 CHECK 的表。
+        return (
+            "CREATE TABLE IF NOT EXISTS files ("
+            "file_id TEXT PRIMARY KEY, kb_id TEXT NOT NULL, name TEXT NOT NULL, "
+            "extension TEXT NOT NULL, "
+            f"size INTEGER NOT NULL CHECK(size > 0 AND size <= {MAX_STORED_FILE_BYTES}), "
+            "content_hash TEXT NOT NULL, storage_path TEXT NOT NULL UNIQUE, "
+            "storage_backend TEXT NOT NULL, index_status TEXT NOT NULL CHECK(index_status IN "
+            "('not_indexed','recorded','parsing','indexing','indexed','failed')), "
+            "index_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
+            "idempotency_key TEXT NOT NULL, UNIQUE(kb_id, idempotency_key))"
+        )
+
     async def setup(self):
         async with self.database.transaction():
-            await self.database.connection.execute(
-                "CREATE TABLE IF NOT EXISTS files ("
-                "file_id TEXT PRIMARY KEY, kb_id TEXT NOT NULL, name TEXT NOT NULL, "
-                "extension TEXT NOT NULL, "
-                "size INTEGER NOT NULL CHECK(size > 0 AND size <= 20971520), "
-                "content_hash TEXT NOT NULL, storage_path TEXT NOT NULL UNIQUE, "
-                "storage_backend TEXT NOT NULL, index_status TEXT NOT NULL CHECK(index_status IN "
-                "('not_indexed','recorded','parsing','indexing','indexed','failed')), "
-                "index_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
-                "idempotency_key TEXT NOT NULL, UNIQUE(kb_id, idempotency_key))"
-            )
+            await self._create_or_migrate()
             await self.database.connection.execute(
                 "CREATE INDEX IF NOT EXISTS files_kb_name ON files(kb_id, name)"
             )
             await self.database.connection.execute(
                 "CREATE INDEX IF NOT EXISTS files_content_hash ON files(content_hash)"
             )
+
+    async def _create_or_migrate(self):
+        connection = self.database.connection
+        async with connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='files'"
+        ) as cursor:
+            row = await cursor.fetchone()
+        sql = row["sql"] if row else None
+        if sql is None:
+            await connection.execute(self._create_files_sql())
+            return
+        if "20971520)" not in sql:
+            return
+        # 旧表把 20 MiB 上限写死在 CHECK 里；SQLite 无法修改 CHECK，只能重建表并迁移数据。
+        columns = (
+            "file_id, kb_id, name, extension, size, content_hash, storage_path, "
+            "storage_backend, index_status, index_error, created_at, updated_at, "
+            "idempotency_key"
+        )
+        await connection.execute("ALTER TABLE files RENAME TO files_old")
+        await connection.execute(self._create_files_sql())
+        await connection.execute(f"INSERT INTO files ({columns}) SELECT {columns} FROM files_old")
+        await connection.execute("DROP TABLE files_old")
 
     async def by_key(self, kb_id, key):
         # Called under the shared transaction lock by FileService.
@@ -247,17 +277,27 @@ class FileService:
                 if stored is not None:
                     # 提交可能在报错前已生效：先确认记录是否落库，再决定是否删除对象，
                     # 避免删掉已被记录引用的文件，导致记录与对象不一致。
-                    committed = await self._committed_record(file_id)
-                    if committed is not None:
-                        return committed
                     try:
-                        await self.storage.delete(stored.path)
+                        committed = await self.repository.get(file_id)
                     except Exception as exc:
                         logger.warning(
-                            "upload_compensation_delete_failed file_id=%s type=%s",
+                            "upload_compensation_probe_failed file_id=%s type=%s",
                             file_id,
                             type(exc).__name__,
                         )
+                        # 查询失败时提交状态未知：保留对象，并向调用方报告原始失败。
+                        # 只有成功查询且确认没有记录时，才允许删除对象。
+                    else:
+                        if committed is not None:
+                            return FileRecord(**committed)
+                        try:
+                            await self.storage.delete(stored.path)
+                        except Exception as exc:
+                            logger.warning(
+                                "upload_compensation_delete_failed file_id=%s type=%s",
+                                file_id,
+                                type(exc).__name__,
+                            )
                 raise
 
         # Once the complete body has arrived, finish publication/compensation before closing it.
@@ -267,16 +307,3 @@ class FileService:
         except asyncio.CancelledError:
             await task
             raise
-
-    async def _committed_record(self, file_id: str) -> FileRecord | None:
-        """补偿前探测记录是否已提交；查询失败时保守返回空（不清除对象）。"""
-        try:
-            row = await self.repository.get(file_id)
-        except Exception as exc:
-            logger.warning(
-                "upload_compensation_probe_failed file_id=%s type=%s",
-                file_id,
-                type(exc).__name__,
-            )
-            return None
-        return FileRecord(**row) if row else None

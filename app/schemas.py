@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
     chat_ready: bool = False
+    embedding_ready: bool = False
 
 
 class Conversation(BaseModel):
@@ -38,6 +39,7 @@ class RunRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     message: str = Field(min_length=1, max_length=4000)
     idempotency_key: str = Field(min_length=1, max_length=128)
+    knowledge_base_id: Literal["default"] | None = None
 
 
 class RunResponse(BaseModel):
@@ -55,4 +57,5 @@ class RunResponse(BaseModel):
     event_seq: int = 0
     answer: str | None = None
     tools_used: list[str] = Field(default_factory=list)
+    sources: list[dict] = Field(default_factory=list)
     error: dict | None = None

@@ -334,6 +334,39 @@ def test_upload_compensation_keeps_committed_file(client, monkeypatch):
     assert len(objects()) == 1
 
 
+def test_upload_probe_failure_preserves_committed_file_and_retry(client, monkeypatch):
+    service = client.app.state.file_service
+    connection = service.repository.database.connection
+    real_commit = connection.commit
+    real_get = service.repository.get
+    state = {"raised": False}
+
+    async def commit_then_raise():
+        await real_commit()
+        if not state["raised"]:
+            state["raised"] = True
+            raise sqlite3.OperationalError("injected after commit")
+
+    async def failed_probe(file_id):
+        raise sqlite3.OperationalError("injected probe failure")
+
+    monkeypatch.setattr(connection, "commit", commit_then_raise)
+    monkeypatch.setattr(service.repository, "get", failed_probe)
+    first = upload(client, key="same")
+    assert first.status_code == 503
+    persisted = rows()
+    assert len(persisted) == 1
+    assert len(objects()) == 1
+    assert objects()[0].read_bytes() == b"hello"
+
+    monkeypatch.setattr(connection, "commit", real_commit)
+    monkeypatch.setattr(service.repository, "get", real_get)
+    retry = upload(client, key="same")
+    assert retry.status_code == 201
+    assert retry.json()["file_id"] == persisted[0][0]
+    assert len(rows()) == len(objects()) == 1
+
+
 def test_schedule_serializes_concurrent_requests(client, monkeypatch):
     upload(client, "a.txt", b"content")
     service = client.app.state.index_service
@@ -401,7 +434,7 @@ def test_parse_offloads_from_event_loop(client, monkeypatch):
     file_id = rows()[0][0]
     ticks = {"n": 0}
 
-    def blocking_parse(extension, data):
+    def blocking_parse(extension, data, options=None):
         time.sleep(0.3)
         return [Block(text="ok")]
 

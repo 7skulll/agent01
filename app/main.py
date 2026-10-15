@@ -11,10 +11,16 @@ from app.agent.runtime import AgentRuntime
 from app.config import Settings
 from app.conversations import ConversationNotFoundError, ConversationRepository
 from app.errors import ChatError
+from app.rag.embedding import EmbeddingModel, build_embedding_model
 from app.rag.file_api import router as file_router
 from app.rag.files import FileRepository, FileService
 from app.rag.indexing import IndexRepository, IndexService
+from app.rag.lexical import LexicalIndex
+from app.rag.reranking import Reranker
+from app.rag.retrieval import RetrievalService
+from app.rag.retrieval import router as retrieval_router
 from app.rag.storage import LocalStorage
+from app.rag.vectors import VectorRepository, VectorService
 from app.run_api import router as run_router
 from app.run_repository import RunRepository
 from app.runs import RunService
@@ -27,6 +33,7 @@ router = APIRouter(prefix="/api/v1")
 async def health(request: Request):
     return HealthResponse(
         chat_ready=request.app.state.runtime.ready,
+        embedding_ready=request.app.state.embedding_model is not None,
     )
 
 
@@ -62,11 +69,21 @@ async def get_history(thread_id: UUID, request: Request):
 def create_app(
     settings: Settings | None = None,
     chat_model: BaseChatModel | None = None,
+    embedding_model: EmbeddingModel | None = None,
+    reranker: Reranker | None = None,
 ) -> FastAPI:
     settings = settings or Settings()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # 启动时验证本地编码资源，不在首个用户请求中触发初始化或网络下载。
+        from app.tokenization import TokenCounter
+
+        for name in {settings.chat_tokenizer, settings.embedding_tokenizer}:
+            TokenCounter(name).count("预热")
+        app.state.embedding_model = (
+            embedding_model if embedding_model is not None else build_embedding_model(settings)
+        )
         settings.chat_database_path.parent.mkdir(parents=True, exist_ok=True)
         database_path = str(settings.chat_database_path)
         async with aiosqlite.connect(database_path) as connection:
@@ -80,13 +97,31 @@ def create_app(
             app.state.file_service = FileService(file_repository, storage)
             index_repository = IndexRepository(repository)
             await index_repository.setup()
+            vectors = VectorRepository(repository)
+            await vectors.setup()
+            lexical = LexicalIndex(repository)
+            await lexical.setup()
+            vector_service = VectorService(
+                file_repository,
+                index_repository,
+                vectors,
+                settings,
+                app.state.embedding_model,
+                lexical,
+            )
+            app.state.vector_service = vector_service
+            app.state.retrieval_service = RetrievalService(
+                vectors, vector_service, settings, reranker
+            )
             app.state.index_service = IndexService(
-                file_repository, index_repository, storage, settings
+                file_repository, index_repository, storage, settings, vector_service
             )
             await app.state.index_service.reconcile()
             async with AsyncSqliteSaver.from_conn_string(database_path) as checkpointer:
                 await checkpointer.setup()
-                app.state.runtime = AgentRuntime(settings, checkpointer, repository, chat_model)
+                app.state.runtime = AgentRuntime(
+                    settings, checkpointer, repository, chat_model, app.state.retrieval_service
+                )
                 await app.state.runtime.initialize_memory()
                 app.state.run_service = RunService(app.state.runtime, run_repository)
                 await app.state.run_service.reconcile_completed()
@@ -99,7 +134,7 @@ def create_app(
     app = FastAPI(
         title=settings.app_name,
         version="0.1.0",
-        description="Agent 对话、LangGraph 可恢复任务与 SQLite 历史；RAG 检索待接入。",
+        description="Agent 对话、LangGraph 可恢复任务与 SQLite 历史；SQLite 向量与全文混合检索。",
         lifespan=lifespan,
     )
     app.add_middleware(
@@ -113,6 +148,7 @@ def create_app(
     app.include_router(router)
     app.include_router(run_router)
     app.include_router(file_router)
+    app.include_router(retrieval_router)
     return app
 
 

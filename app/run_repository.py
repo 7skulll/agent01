@@ -6,7 +6,7 @@ from app.conversations import ConversationRepository
 from app.errors import ChatError
 from app.schemas import RunRequest, RunResponse
 
-GRAPH_VERSION = "chat-v1"
+GRAPH_VERSION = "chat-rag-v4"
 TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 # Roll elapsed time forward from the execution start (including downtime) and
 # clear it, so restarts cannot reset the accumulated run budget.
@@ -57,8 +57,15 @@ class RunRepository:
                 await self.connection.execute(
                     "ALTER TABLE runs ADD COLUMN execution_started_at TEXT"
                 )
-            # Step 5 will schedule automatic recovery. For now expose resumable
-            # tasks and keep their checkpoints and conversation ownership intact.
+            for column, sql_type in (
+                ("knowledge_base_id", "TEXT"),
+                ("sources", "TEXT NOT NULL DEFAULT '[]'"),
+            ):
+                if column not in columns:
+                    await self.connection.execute(
+                        f"ALTER TABLE runs ADD COLUMN {column} {sql_type}"
+                    )
+            # 重启只标记可恢复状态，模型和工具需显式恢复后才执行。
             await self.connection.execute(
                 f"UPDATE runs SET status='recovering', {_ELAPSED_ROLLOVER} "
                 "WHERE status IN ('queued','running')"
@@ -79,6 +86,7 @@ class RunRepository:
             **{
                 **row,
                 "tools_used": json.loads(row["tools_used"]),
+                "sources": json.loads(row["sources"]),
                 "error": json.loads(row["error"]) if row["error"] else None,
             }
         )
@@ -149,7 +157,10 @@ class RunRepository:
             ) as cursor:
                 existing = await cursor.fetchone()
             if existing:
-                if existing["message"] != body.message:
+                if (existing["message"], existing["knowledge_base_id"]) != (
+                    body.message,
+                    body.knowledge_base_id,
+                ):
                     raise ChatError("idempotency_conflict", "幂等键已用于其他消息。", 409)
                 return dict(existing), False
             async with self.connection.execute(
@@ -169,8 +180,9 @@ class RunRepository:
             timestamp = now()
             await self.connection.execute(
                 "INSERT INTO runs (run_id, conversation_id, request_id, idempotency_key, "
-                "message, base_run_id, graph_version, status, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)",
+                "message, base_run_id, graph_version, status, created_at, updated_at, "
+                "knowledge_base_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)",
                 (
                     run_id,
                     conversation_id,
@@ -181,6 +193,7 @@ class RunRepository:
                     GRAPH_VERSION,
                     timestamp,
                     timestamp,
+                    body.knowledge_base_id,
                 ),
             )
             row = await self._row(run_id)
@@ -293,6 +306,7 @@ class RunRepository:
         checkpoint_id=None,
         answer=None,
         tools_used=None,
+        sources=None,
         error=None,
         elapsed=0,
     ):
@@ -319,7 +333,12 @@ class RunRepository:
                     raise ChatError("publication_conflict", "会话历史发布发生冲突。", 409)
                 event, data = (
                     "done",
-                    {"answer": answer, "tools_used": tools_used or [], "status": status},
+                    {
+                        "answer": answer,
+                        "tools_used": tools_used or [],
+                        "sources": sources or [],
+                        "status": status,
+                    },
                 )
             else:
                 await self.connection.execute(
@@ -335,12 +354,14 @@ class RunRepository:
                 event = "cancelled" if status == "cancelled" else "error"
                 data = {**(error or {}), "status": status}
             await self.connection.execute(
-                "UPDATE runs SET status=?, answer=?, tools_used=?, error=?, updated_at=?, "
+                "UPDATE runs SET status=?, answer=?, tools_used=?, sources=?, error=?, "
+                "updated_at=?, "
                 "elapsed_seconds=elapsed_seconds+?, execution_started_at=NULL WHERE run_id=?",
                 (
                     status,
                     answer,
                     json.dumps(tools_used or []),
+                    json.dumps(sources or []),
                     json.dumps(error) if error else None,
                     timestamp,
                     elapsed,

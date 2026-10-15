@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 
-MAX_FILE_BYTES = 20 * 1024 * 1024
+MAX_FILE_BYTES = 50 * 1024 * 1024
+# 数据库只做宽松兜底，真实限额由 MAX_FILE_BYTES 在接收期控制，避免每次调整都重建表。
+MAX_STORED_FILE_BYTES = 200 * 1024 * 1024
 ALLOWED_EXTENSIONS = frozenset({".pdf", ".doc", ".docx", ".md", ".txt", ".xls", ".xlsx"})
 
 

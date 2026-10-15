@@ -59,6 +59,7 @@ class RunService:
                     checkpoint_id=snapshot.config["configurable"]["checkpoint_id"],
                     answer=snapshot.values["answer"],
                     tools_used=snapshot.values["tools_used"],
+                    sources=snapshot.values.get("sources", []),
                 )
             except (ChatError, sqlite3.Error) as exc:
                 logger.warning(
@@ -91,6 +92,8 @@ class RunService:
                 raise ChatError("service_stopping", "服务正在关闭。", 503, True)
             if not self.runtime.ready:
                 raise ChatError("model_not_configured", "请先配置模型。", 503)
+            if body.knowledge_base_id:
+                self.runtime.retrieval_service.vector_service.require_model()
             row, created = await self.repository.create(conversation_id, body, request_id)
             task = self.tasks.get(row["run_id"])
             if created:
@@ -143,6 +146,7 @@ class RunService:
                 history = await self.runtime.committed_messages(row["conversation_id"])
                 inputs = {
                     "run_id": run_id,
+                    "knowledge_base_id": row["knowledge_base_id"],
                     "base_message_count": len(history),
                     "messages": [*history, HumanMessage(content=row["message"])],
                 }
@@ -207,6 +211,7 @@ class RunService:
                 checkpoint_id=snapshot.config["configurable"]["checkpoint_id"],
                 answer=snapshot.values["answer"],
                 tools_used=snapshot.values["tools_used"],
+                sources=snapshot.values.get("sources", []),
                 elapsed=elapsed,
             )
             elapsed_saved = True

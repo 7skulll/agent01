@@ -90,7 +90,9 @@ async def upload_file(
     except ChatError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.detail()) from None
     except FileTooLargeError:
-        raise fail(413, "file_too_large", "单文件不能超过 20 MiB。") from None
+        raise fail(
+            413, "file_too_large", f"单文件不能超过 {MAX_FILE_BYTES // (1024 * 1024)} MiB。"
+        ) from None
     except EmptyFileError:
         raise fail(422, "empty_file", "不能上传空文件。") from None
     except MultiPartException:

@@ -8,16 +8,11 @@ from app.config import Settings
 from app.conversations import ConversationRepository
 from app.errors import ChatError
 from app.schemas import ConversationHistory, StoredMessage
+from app.tokenization import TokenCounter
 
 
 class AgentRuntime:
-    """Shared agent dependencies and helpers for the chat engines.
-
-    Owns the model, checkpointer, conversation repository and the small set of
-    read-only helpers that both the prebuilt-agent /chat engine and the explicit
-    /runs graph need. Engine-specific orchestration stays in the respective
-    service so this object never depends on either engine.
-    """
+    """任务图共享的模型、检查点、会话仓库和检索服务依赖。"""
 
     def __init__(
         self,
@@ -25,11 +20,28 @@ class AgentRuntime:
         checkpointer: AsyncSqliteSaver,
         repository: ConversationRepository,
         model: BaseChatModel | None = None,
+        retrieval_service=None,
     ):
         self.settings = settings
+        self.counter = TokenCounter(settings.chat_tokenizer)
         self.checkpointer = checkpointer
         self.repository = repository
         self.model = model
+        self.retrieval_service = retrieval_service
+
+    @property
+    def input_budget(self):
+        return (
+            int(self.settings.rag_input_tokens * self.settings.token_safety_ratio)
+            - self.settings.llm_max_tokens
+            - self.settings.chat_token_overhead
+        )
+
+    def validate_input(self, messages, tools=()):
+        count = self.counter.messages(messages, tools)
+        if count > self.input_budget:
+            raise ChatError("context_limit_exceeded", "会话超出上下文预算，请创建新会话。", 422)
+        return count
 
     @property
     def ready(self) -> bool:
