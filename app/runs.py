@@ -1,8 +1,9 @@
 import asyncio
+import json
 import logging
-import sqlite3
 from functools import wraps
 
+import psycopg
 from langchain_core.messages import AIMessageChunk, HumanMessage
 from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
@@ -10,6 +11,7 @@ from openai import APIError
 
 from app.agent.runtime import AgentRuntime
 from app.errors import ChatError, upstream_error
+from app.rag.context_assembly import history_groups, history_window
 from app.run_graph import build_run_graph
 from app.run_repository import GRAPH_VERSION, TERMINAL_STATUSES, RunRepository
 
@@ -60,8 +62,12 @@ class RunService:
                     answer=snapshot.values["answer"],
                     tools_used=snapshot.values["tools_used"],
                     sources=snapshot.values.get("sources", []),
+                    answer_status=snapshot.values.get("answer_status"),
+                    answer_reason=snapshot.values.get("answer_reason"),
+                    answer_segments=snapshot.values.get("answer_segments", []),
+                    answer_protocol=snapshot.values.get("answer_protocol"),
                 )
-            except (ChatError, sqlite3.Error) as exc:
+            except (ChatError, psycopg.Error) as exc:
                 logger.warning(
                     "run_publication_deferred run_id=%s type=%s", row["run_id"], type(exc).__name__
                 )
@@ -92,13 +98,23 @@ class RunService:
                 raise ChatError("service_stopping", "服务正在关闭。", 503, True)
             if not self.runtime.ready:
                 raise ChatError("model_not_configured", "请先配置模型。", 503)
-            if body.knowledge_base_id:
+            if body.knowledge_base_id and (
+                body.retrieval_mode == "vector"
+                or (
+                    body.retrieval_mode == "hybrid"
+                    and self.runtime.settings.retrieval_dense_weight == 1
+                )
+            ):
                 self.runtime.retrieval_service.vector_service.require_model()
             row, created = await self.repository.create(conversation_id, body, request_id)
             task = self.tasks.get(row["run_id"])
             if created:
                 self.start(row["run_id"], "new")
             elif row["status"] == "queued" and (task is None or task.done()):
+                if row["graph_version"] != GRAPH_VERSION:
+                    raise ChatError(
+                        "graph_version_mismatch", "任务图版本不兼容，请重新提交问题。", 409
+                    )
                 # A commit may have succeeded despite an error being reported.
                 # Idempotent retries must attach a worker to that queued task.
                 snapshot = await self.get_graph().aget_state(self.config(row["run_id"]))
@@ -113,12 +129,26 @@ class RunService:
             return Command(resume=True)
         return None
 
+    @complete_on_cancel
+    async def delete_conversation(self, thread_id):
+        async with self.control_lock:
+            async with self.repository.database.read():
+                cursor = await self.repository.connection.execute(
+                    "SELECT run_id FROM runs WHERE conversation_id=%s", (thread_id,)
+                )
+                ids = [row["run_id"] for row in await cursor.fetchall()]
+            if any(self.tasks.get(i) is not None and not self.tasks[i].done() for i in ids):
+                raise ChatError("conversation_busy", "会话任务正在收尾，请稍后重试。", 409, True)
+            await self.runtime.repository.delete(thread_id)
+        pending = await self.runtime.repository.cleanup_checkpoints(self.runtime.checkpointer)
+        return {"thread_id": thread_id, "deleted": True, "cleanup_pending": pending}
+
     async def settle(self, run_id, status, **kwargs):
         for attempt in range(3):
             try:
                 await self.repository.finish(run_id, status, **kwargs)
                 return
-            except sqlite3.Error:
+            except psycopg.Error:
                 if attempt == 2:
                     raise
                 await asyncio.sleep(0.05 * (attempt + 1))
@@ -147,9 +177,28 @@ class RunService:
                 inputs = {
                     "run_id": run_id,
                     "knowledge_base_id": row["knowledge_base_id"],
+                    "retrieval_mode": row["retrieval_mode"],
+                    "capture_trace": row.get("capture_trace", False),
+                    "file_ids": json.loads(row["file_ids"]) if row.get("file_ids") else None,
                     "base_message_count": len(history),
                     "messages": [*history, HumanMessage(content=row["message"])],
                 }
+                if row["knowledge_base_id"]:
+                    scope = await self.repository.same_scope_turns(
+                        row["conversation_id"], row["knowledge_base_id"]
+                    )
+                    groups = history_groups(history)
+                    scoped = [m for group in groups[-scope:] for m in group] if scope else []
+                    inputs["rag_history"] = history_window(
+                        scoped,
+                        self.runtime.counter,
+                        self.runtime.settings.rag_history_tokens,
+                        self.runtime.settings.rag_history_turns,
+                    )
+                    inputs["history_scope_dropped"] = len(groups) - len(history_groups(scoped))
+                    inputs["history_window_dropped"] = len(history_groups(scoped)) - len(
+                        history_groups(inputs["rag_history"])
+                    )
             async for part in graph.astream(
                 inputs,
                 config=config,
@@ -170,6 +219,7 @@ class RunService:
                     chunk, metadata = part["data"]
                     if (
                         metadata.get("langgraph_node") == "model"
+                        and not row["knowledge_base_id"]
                         and isinstance(chunk, AIMessageChunk)
                         and chunk.text
                     ):
@@ -190,6 +240,8 @@ class RunService:
         elapsed_saved = False
         row = await self.repository.get(run_id)
         try:
+            if row["graph_version"] != GRAPH_VERSION:
+                raise ChatError("graph_version_mismatch", "任务图版本不兼容，请重新提交问题。", 409)
             await self.repository.set_running(run_id)
             graph = self.get_graph()
             config = self.config(run_id)
@@ -212,6 +264,10 @@ class RunService:
                 answer=snapshot.values["answer"],
                 tools_used=snapshot.values["tools_used"],
                 sources=snapshot.values.get("sources", []),
+                answer_status=snapshot.values.get("answer_status"),
+                answer_reason=snapshot.values.get("answer_reason"),
+                answer_segments=snapshot.values.get("answer_segments", []),
+                answer_protocol=snapshot.values.get("answer_protocol"),
                 elapsed=elapsed,
             )
             elapsed_saved = True
@@ -228,7 +284,7 @@ class RunService:
                 error = ChatError("agent_timeout", "任务累计执行时间已达到上限。", 504)
             elif isinstance(exc, GraphRecursionError):
                 error = ChatError("agent_limit_exceeded", "任务达到步骤上限。", 429)
-            elif isinstance(exc, sqlite3.Error):
+            elif isinstance(exc, psycopg.Error):
                 error = ChatError("history_publish_failed", "任务存储失败，可稍后恢复。", 503, True)
             else:
                 error = ChatError("internal_error", "任务处理失败，可稍后恢复。", 500, True)

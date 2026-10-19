@@ -12,7 +12,10 @@ from app.rag.retrieval import unique_queries
 async def plan_queries(runtime, repository, state, config):
     settings = runtime.settings
     original = state["messages"][-1].text
-    history = [message for message in state["messages"][:-1] if message.type in ("human", "ai")]
+    projected = (
+        state.get("rag_history", []) if state.get("knowledge_base_id") else state["messages"][:-1]
+    )
+    history = [message for message in projected if message.type in ("human", "ai")]
     if not settings.rag_query_expand and not (settings.rag_query_rewrite and history):
         return {"search_queries": [original], "rerank_query": original, "query_degraded": False}
     # 最近对话优先，历史与原问题分开传入；规划调用也消耗持久化模型预算。
@@ -44,8 +47,11 @@ async def plan_queries(runtime, repository, state, config):
         ]
         estimated = runtime.validate_input(messages)
         await repository.reserve_call(state["run_id"], "model", settings.agent_max_model_calls)
+        runtime.metrics.tokens("query_plan", estimated_input=estimated)
         async with asyncio.timeout(settings.rag_query_timeout_seconds):
-            result = await runtime.get_model().ainvoke(messages, config=config)
+            with runtime.metrics.span("query_plan_model"):
+                result = await runtime.get_model().ainvoke(messages, config=config)
+        runtime.metrics.tokens("query_plan", usage=result.usage_metadata)
         values = json.loads(result.text)
         max_queries = 2 if settings.rag_query_expand else 1
         if not isinstance(values, list) or not values or len(values) > max_queries:

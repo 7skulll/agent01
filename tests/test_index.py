@@ -1,13 +1,13 @@
 import asyncio
-import sqlite3
 import time
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
-from support import settings
+from support import settings, test_database
 
 from app.errors import ChatError
 from app.main import create_app
@@ -36,7 +36,7 @@ def wait_index(client):
 
 
 def rows(where=""):
-    with sqlite3.connect("data/chat.sqlite3") as connection:
+    with test_database() as connection:
         return connection.execute(
             f"SELECT file_id, index_status, index_error FROM files {where}"
         ).fetchall()
@@ -47,10 +47,10 @@ def objects():
 
 
 def chunk_rows(file_id):
-    with sqlite3.connect("data/chat.sqlite3") as connection:
+    with test_database() as connection:
         return connection.execute(
             "SELECT chunk_id, chunk_index, content, heading, kind FROM chunks "
-            "WHERE file_id=? ORDER BY chunk_index",
+            "WHERE file_id=%s ORDER BY chunk_index",
             (file_id,),
         ).fetchall()
 
@@ -279,9 +279,9 @@ def test_unknown_knowledge_base(client):
 def test_restart_resets_stuck_parsing():
     with TestClient(create_app(settings())) as client:
         record = upload(client, "制度.txt", b"valid content").json()
-    with sqlite3.connect("data/chat.sqlite3") as connection:
+    with test_database() as connection:
         connection.execute(
-            "UPDATE files SET index_status='parsing' WHERE file_id=?", (record["file_id"],)
+            "UPDATE files SET index_status='parsing' WHERE file_id=%s", (record["file_id"],)
         )
         connection.commit()
 
@@ -318,7 +318,7 @@ def test_upload_compensation_keeps_committed_file(client, monkeypatch):
         await real_commit(self)
         if not state["raised"]:
             state["raised"] = True
-            raise sqlite3.OperationalError("injected after commit")
+            raise psycopg.OperationalError("injected after commit")
 
     monkeypatch.setattr(connection_type, "commit", commit_then_raise)
     first = upload(client, key="same")
@@ -345,10 +345,10 @@ def test_upload_probe_failure_preserves_committed_file_and_retry(client, monkeyp
         await real_commit()
         if not state["raised"]:
             state["raised"] = True
-            raise sqlite3.OperationalError("injected after commit")
+            raise psycopg.OperationalError("injected after commit")
 
     async def failed_probe(file_id):
-        raise sqlite3.OperationalError("injected probe failure")
+        raise psycopg.OperationalError("injected probe failure")
 
     monkeypatch.setattr(connection, "commit", commit_then_raise)
     monkeypatch.setattr(service.repository, "get", failed_probe)
@@ -416,7 +416,7 @@ def test_chunk_persist_failure_marks_failed_and_continues(client, monkeypatch):
     async def flaky(self, file_id, records):
         calls["n"] += 1
         if calls["n"] == 1:
-            raise sqlite3.OperationalError("injected")
+            raise psycopg.OperationalError("injected")
         await original(self, file_id, records)
 
     monkeypatch.setattr(IndexRepository, "replace_within", flaky)

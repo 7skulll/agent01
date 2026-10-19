@@ -1,8 +1,8 @@
 import asyncio
 import json
-import sqlite3
 from uuid import uuid4
 
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
@@ -54,7 +54,7 @@ def test_idempotent_retry_after_commit_error_starts_exactly_one_worker(monkeypat
 
         async def successful_commit_reported_as_error():
             await original()
-            raise sqlite3.OperationalError("private-commit-detail")
+            raise psycopg.OperationalError("private-commit-detail")
 
         monkeypatch.setattr(connection, "commit", successful_commit_reported_as_error)
         body = {"message": "你好", "idempotency_key": "same"}
@@ -122,7 +122,7 @@ def test_write_failure_rolls_back_and_does_not_poison_other_conversations(monkey
         original = repository.connection.commit
 
         async def fail_commit():
-            raise sqlite3.OperationalError("private-database-detail")
+            raise psycopg.OperationalError("private-database-detail")
 
         async def mutate():
             if operation == "reserve_call":
@@ -137,7 +137,7 @@ def test_write_failure_rolls_back_and_does_not_poison_other_conversations(monkey
                 await getattr(repository, operation)(run)
 
         monkeypatch.setattr(repository.connection, "commit", fail_commit)
-        with pytest.raises(sqlite3.OperationalError):
+        with pytest.raises(psycopg.OperationalError):
             client.portal.call(mutate)
         assert not repository.connection.in_transaction
         monkeypatch.setattr(repository.connection, "commit", original)
@@ -221,14 +221,14 @@ def test_subscription_error_is_clean_and_reconnect_preserves_cursor(monkeypatch,
             nonlocal reads
             reads += 1
             if failure == "events" and reads == 2:
-                raise sqlite3.OperationalError("private-read-detail")
+                raise psycopg.OperationalError("private-read-detail")
             return (await original_events(*args, **kwargs))[:1]
 
         async def failing_inspect(*args, **kwargs):
             nonlocal inspections
             inspections += 1
             if failure == "inspect" and inspections == 2:
-                raise sqlite3.OperationalError("private-inspect-detail")
+                raise psycopg.OperationalError("private-inspect-detail")
             return await original_inspect(*args, **kwargs)
 
         monkeypatch.setattr(repository, "events", one_event_at_a_time)

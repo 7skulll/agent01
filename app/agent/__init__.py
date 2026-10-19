@@ -1,1 +1,1 @@
-"""Shared agent building blocks used by both the /chat and /runs engines."""
+"""Agent 模型运行时、提示词及消息校验。"""

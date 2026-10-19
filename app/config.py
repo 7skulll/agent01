@@ -11,12 +11,16 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "Enterprise RAG"
+    llm_provider: Literal["deepseek", "openai"] = "deepseek"
     llm_model: str = ""
     llm_base_url: str = ""
     llm_api_key: SecretStr = SecretStr("")
     llm_timeout_seconds: float = Field(default=30, gt=0, le=300)
     llm_max_tokens: int = Field(default=256, ge=1, le=8192)
-    chat_database_path: Path = Path("data/chat.sqlite3")
+    database_url: SecretStr = SecretStr(
+        "postgresql://rag:rag_local_dev@127.0.0.1:5432/langchain_rag"
+    )
+    database_pool_size: int = Field(default=10, ge=3, le=100)
     file_storage_path: Path = Path("data/files")
     chunk_size_tokens: int = Field(default=512, ge=64, le=4096)
     chunk_overlap_tokens: int = Field(default=64, ge=0, le=1024)
@@ -24,7 +28,7 @@ class Settings(BaseSettings):
     embedding_model: str = ""
     embedding_base_url: str = ""
     embedding_api_key: SecretStr = SecretStr("")
-    embedding_dim: int = Field(default=0, ge=0, le=65536)
+    embedding_dim: int = Field(default=0, ge=0, le=16000)
     embedding_batch_size: int = Field(default=10, ge=1, le=256)
     embedding_timeout_seconds: float = Field(default=30, gt=0, le=300)
     embedding_max_retries: int = Field(default=3, ge=0, le=10)
@@ -37,13 +41,49 @@ class Settings(BaseSettings):
     embedding_max_batch_tokens: int = Field(default=0, ge=0)
     token_safety_ratio: float = Field(default=0.95, gt=0, le=1)
     chat_token_overhead: int = Field(default=256, ge=0)
+    vector_search_mode: Literal["exact", "hnsw"] = "exact"
+    hnsw_ef_search: int = Field(default=100, ge=10, le=1000)
     retrieval_answer_candidates: int = Field(default=10, ge=1, le=20)
     retrieval_dense_weight: float = Field(default=0.5, ge=0, le=1)
+    rerank_enabled: bool = False
+    rerank_provider: Literal["siliconflow"] = "siliconflow"
+    rerank_base_url: str = "https://api.siliconflow.cn/v1"
+    rerank_api_key: SecretStr = SecretStr("")
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    rerank_tokenizer: Literal["cl100k_base", "o200k_base", "heuristic"] = "cl100k_base"
+    # 0 将窗口处理交给服务端；配置后使用本地计数器预估查询与正文的总预算。
+    rerank_max_input_tokens: int = Field(default=0, ge=0)
+    rerank_window_overlap_tokens: int = Field(default=64, ge=0, le=1024)
+    rerank_batch_size: int = Field(default=64, ge=1, le=256)
+    rerank_max_windows: int = Field(default=1024, ge=1, le=4096)
     retrieval_rerank_candidates: int = Field(default=40, ge=20, le=500)
-    retrieval_rerank_weight: float = Field(default=0.75, ge=0, le=1)
+    retrieval_rerank_weight: float = Field(default=1, ge=0, le=1)
+    retrieval_rerank_min_score: float | None = Field(default=None, allow_inf_nan=False)
     retrieval_rerank_timeout_seconds: float = Field(default=10, gt=0, le=60)
     retrieval_max_per_file: int = Field(default=20, ge=1, le=20)
     retrieval_neighbor_chunks: int = Field(default=0, ge=0, le=2)
+    rag_history_tokens: int = Field(
+        default=1536,
+        ge=0,
+        le=16384,
+        validation_alias=AliasChoices("RAG_HISTORY_TOKENS", "RAG_RAG_HISTORY_TOKENS"),
+    )
+    rag_answer_json_mode: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("RAG_ANSWER_JSON_MODE", "RAG_RAG_ANSWER_JSON_MODE"),
+    )
+    rag_history_turns: int = Field(
+        default=3,
+        ge=0,
+        le=20,
+        validation_alias=AliasChoices("RAG_HISTORY_TURNS", "RAG_RAG_HISTORY_TURNS"),
+    )
+    rag_neighbor_budget_ratio: float = Field(
+        default=0.2,
+        ge=0,
+        le=0.5,
+        validation_alias=AliasChoices("RAG_NEIGHBOR_BUDGET_RATIO", "RAG_RAG_NEIGHBOR_BUDGET_RATIO"),
+    )
     rag_query_rewrite: bool = Field(
         default=False, validation_alias=AliasChoices("RAG_QUERY_REWRITE", "RAG_RAG_QUERY_REWRITE")
     )

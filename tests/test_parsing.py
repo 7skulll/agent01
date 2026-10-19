@@ -1,13 +1,11 @@
 """解析精细化与结构切片的专项测试（不依赖网络与外部模型）。"""
 
-import sqlite3
 from io import BytesIO
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from support import settings
+from support import settings, test_database
 
 from app.main import create_app
 from app.rag.chunking import (
@@ -52,10 +50,10 @@ def wait_index(client):
 
 
 def chunk_columns(file_id):
-    with sqlite3.connect("data/chat.sqlite3") as connection:
+    with test_database() as connection:
         return connection.execute(
             "SELECT chunk_index, content, heading, kind, heading_level, source_order "
-            "FROM chunks WHERE file_id=? ORDER BY chunk_index",
+            "FROM chunks WHERE file_id=%s ORDER BY chunk_index",
             (file_id,),
         ).fetchall()
 
@@ -318,9 +316,9 @@ def test_oversized_chunk_count_fails_clearly():
         wait_index(client)
         status = chunk_columns(record["file_id"])
         assert status == []
-    with sqlite3.connect("data/chat.sqlite3") as connection:
+    with test_database() as connection:
         row = connection.execute(
-            "SELECT index_status, index_error FROM files WHERE file_id=?",
+            "SELECT index_status, index_error FROM files WHERE file_id=%s",
             (record["file_id"],),
         ).fetchone()
     assert row[0] == "failed"
@@ -354,57 +352,25 @@ def test_markdown_structures_reach_chunks(client):
 # --------------------------------------------------------------------------- 迁移
 
 
-def test_schema_migration_from_old_constraints():
-    Path("data").mkdir(exist_ok=True)
-    with sqlite3.connect("data/chat.sqlite3") as connection:
-        connection.execute(
-            "CREATE TABLE files (file_id TEXT PRIMARY KEY, kb_id TEXT NOT NULL, "
-            "name TEXT NOT NULL, extension TEXT NOT NULL, "
-            "size INTEGER NOT NULL CHECK(size > 0 AND size <= 20971520), "
-            "content_hash TEXT NOT NULL, storage_path TEXT NOT NULL UNIQUE, "
-            "storage_backend TEXT NOT NULL, index_status TEXT NOT NULL CHECK(index_status IN "
-            "('not_indexed','recorded','parsing','indexing','indexed','failed')), "
-            "index_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
-            "idempotency_key TEXT NOT NULL, UNIQUE(kb_id, idempotency_key))"
-        )
-        connection.execute(
-            "CREATE TABLE chunks (chunk_id TEXT PRIMARY KEY, kb_id TEXT NOT NULL, "
-            "file_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, content TEXT NOT NULL, "
-            "tokens INTEGER NOT NULL, heading TEXT, kind TEXT NOT NULL "
-            "CHECK(kind IN ('text','table')), page INTEGER, created_at TEXT NOT NULL, "
-            "UNIQUE(file_id, chunk_index))"
-        )
-        connection.execute(
-            "INSERT INTO files VALUES "
-            "('f','default','a.txt','.txt',10,'hash','default/f.txt','local','recorded',"
-            "NULL,'t','t','key')"
-        )
-        connection.execute(
-            "INSERT INTO chunks VALUES ('c','default','f',0,'内容',1,'标题','text',NULL,'t')"
-        )
-        connection.commit()
-
+def test_postgres_schema_supports_parser_metadata_and_large_files():
     with TestClient(create_app(settings())):
         pass
-
-    with sqlite3.connect("data/chat.sqlite3") as connection:
-        files_sql = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE name='files'"
-        ).fetchone()[0]
-        chunks_sql = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE name='chunks'"
-        ).fetchone()[0]
-        assert "20971520)" not in files_sql  # 上限已放宽
-        assert "source_order" in chunks_sql and "heading_level" in chunks_sql
-        # 旧数据保留。
-        assert connection.execute("SELECT count(*) FROM files").fetchone()[0] == 1
-        assert connection.execute("SELECT chunk_id, content FROM chunks").fetchall() == [
-            ("c", "内容")
-        ]
-        # 新 kind 现在可以写入。
-        connection.execute(
-            "INSERT INTO chunks (chunk_id, kb_id, file_id, chunk_index, content, tokens, "
-            "heading, heading_level, kind, page, source_order, created_at) VALUES "
-            "('c2','default','f',1,'x',1,NULL,NULL,'list',NULL,1,'t')"
-        )
-        connection.commit()
+    with test_database() as connection:
+        columns = connection.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema=current_schema() AND table_name='chunks'"
+        ).fetchall()
+        assert {"source_order", "heading_level", "kind"} <= {row[0] for row in columns}
+        assert {row[0] for row in connection.execute("SELECT version FROM schema_migrations")} == {
+            "001_initial.sql",
+            "002_prune_redundant_indexes.sql",
+            "003_independent_lexical.sql",
+            "004_run_retrieval_mode.sql",
+            "005_knowledge_bases.sql",
+            "006_structured_answers.sql",
+            "007_daily_management.sql",
+            "008_model_settings.sql",
+            "009_evaluations.sql",
+        }
+    with TestClient(create_app(settings())):
+        pass

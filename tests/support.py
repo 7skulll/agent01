@@ -11,6 +11,23 @@ from pydantic import Field
 from app.config import Settings
 
 
+def rag_answer(content, source_ids=None, **kwargs):
+    """显式构造新版 RAG 模型返回值，不替生产代码兼容旧的纯文本输出。"""
+    return AIMessage(
+        content=json.dumps(
+            {
+                "status": "answered",
+                "segments": [
+                    {"text": content, "source_ids": [1] if source_ids is None else source_ids}
+                ],
+                "reason": None,
+            },
+            ensure_ascii=False,
+        ),
+        **kwargs,
+    )
+
+
 class ScriptModel(BaseChatModel):
     outputs: list = Field(default_factory=list)
     seen: list = Field(default_factory=list)
@@ -130,3 +147,13 @@ def events(response):
         event_id, event, data = frame.split("\n", 2)
         result.append((event_id[4:], event[7:], json.loads(data[6:])))
     return result
+
+
+def test_database():
+    """连接当前测试隔离 schema，绝不访问应用默认数据库。"""
+    import psycopg
+
+    return psycopg.connect(settings().database_url.get_secret_value())
+
+
+test_database.__test__ = False

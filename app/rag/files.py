@@ -11,18 +11,16 @@ from uuid import uuid4
 from pydantic import BaseModel
 from starlette.datastructures import UploadFile
 
-from app.conversations import ConversationRepository
+from app.database import Database
 from app.errors import ChatError
+from app.knowledge_bases import require_knowledge_base
 from app.rag.storage import (
     ALLOWED_EXTENSIONS,
     MAX_FILE_BYTES,
-    MAX_STORED_FILE_BYTES,
     EmptyFileError,
     FileTooLargeError,
     Storage,
 )
-
-DEFAULT_KB_ID = "default"
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +49,8 @@ class FileSummary(BaseModel):
     index_status: str
     index_error: str | None = None
     chunk_count: int = 0
+    keyword_ready: bool = False
+    keyword_error: str | None = None
     created_at: str
     updated_at: str
 
@@ -79,6 +79,9 @@ def safe_filename(filename: str | None) -> tuple[str, str]:
             name = name.encode("latin-1").decode("utf-8")
         except (UnicodeEncodeError, UnicodeDecodeError):
             pass
+        # Reject control characters before trimming or taking the basename.
+        if any(unicodedata.category(c) == "Cc" for c in name):
+            raise ChatError("invalid_filename", "文件名不能包含控制字符。", 422)
         name = unicodedata.normalize("NFC", name.replace("\\", "/").rsplit("/", 1)[-1])
         name = name.strip()
         if not name or len(name.encode("utf-8")) > 255:
@@ -87,9 +90,8 @@ def safe_filename(filename: str | None) -> tuple[str, str]:
         raise ChatError(
             "invalid_filename", "文件名必须为有效 UTF-8，且不超过 255 字节。", 422
         ) from None
-    # Allow Unicode letters/numbers, spaces and a small set of filename punctuation.
-    if not all(unicodedata.category(c)[0] in {"L", "N", "M"} or c in " ._-()（）" for c in name):
-        raise ChatError("invalid_filename", "文件名包含不允许的字符。", 422)
+    # Display names may contain punctuation, symbols and emoji. Storage keys use
+    # a UUID and the validated extension, never this basename.
     match = re.search(r"(\.[a-z0-9]+)$", name.lower())
     extension = match.group(1) if match else ""
     if extension not in ALLOWED_EXTENSIONS or name.lower() == extension:
@@ -98,105 +100,57 @@ def safe_filename(filename: str | None) -> tuple[str, str]:
 
 
 class FileRepository:
-    def __init__(self, database: ConversationRepository):
+    def __init__(self, database: Database):
         self.database = database
-
-    @staticmethod
-    def _create_files_sql() -> str:
-        # 数据库只做宽松兜底（MAX_STORED_FILE_BYTES），真实 50 MiB 限额在接收期用
-        # MAX_FILE_BYTES 控制，避免以后调整上限都要重建带 CHECK 的表。
-        return (
-            "CREATE TABLE IF NOT EXISTS files ("
-            "file_id TEXT PRIMARY KEY, kb_id TEXT NOT NULL, name TEXT NOT NULL, "
-            "extension TEXT NOT NULL, "
-            f"size INTEGER NOT NULL CHECK(size > 0 AND size <= {MAX_STORED_FILE_BYTES}), "
-            "content_hash TEXT NOT NULL, storage_path TEXT NOT NULL UNIQUE, "
-            "storage_backend TEXT NOT NULL, index_status TEXT NOT NULL CHECK(index_status IN "
-            "('not_indexed','recorded','parsing','indexing','indexed','failed')), "
-            "index_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
-            "idempotency_key TEXT NOT NULL, UNIQUE(kb_id, idempotency_key))"
-        )
-
-    async def setup(self):
-        async with self.database.transaction():
-            await self._create_or_migrate()
-            await self.database.connection.execute(
-                "CREATE INDEX IF NOT EXISTS files_kb_name ON files(kb_id, name)"
-            )
-            await self.database.connection.execute(
-                "CREATE INDEX IF NOT EXISTS files_content_hash ON files(content_hash)"
-            )
-
-    async def _create_or_migrate(self):
-        connection = self.database.connection
-        async with connection.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='files'"
-        ) as cursor:
-            row = await cursor.fetchone()
-        sql = row["sql"] if row else None
-        if sql is None:
-            await connection.execute(self._create_files_sql())
-            return
-        if "20971520)" not in sql:
-            return
-        # 旧表把 20 MiB 上限写死在 CHECK 里；SQLite 无法修改 CHECK，只能重建表并迁移数据。
-        columns = (
-            "file_id, kb_id, name, extension, size, content_hash, storage_path, "
-            "storage_backend, index_status, index_error, created_at, updated_at, "
-            "idempotency_key"
-        )
-        await connection.execute("ALTER TABLE files RENAME TO files_old")
-        await connection.execute(self._create_files_sql())
-        await connection.execute(f"INSERT INTO files ({columns}) SELECT {columns} FROM files_old")
-        await connection.execute("DROP TABLE files_old")
 
     async def by_key(self, kb_id, key):
         # Called under the shared transaction lock by FileService.
-        async with self.database.connection.execute(
-            "SELECT * FROM files WHERE kb_id=? AND idempotency_key=?", (kb_id, key)
-        ) as cursor:
-            row = await cursor.fetchone()
-        return dict(row) if row else None
+        cursor = await self.database.connection.execute(
+            "SELECT * FROM files WHERE kb_id=%s AND idempotency_key=%s", (kb_id, key)
+        )
+        row = await cursor.fetchone()
+        return row
 
     async def insert(self, record: FileRecord, key: str):
         values = {**record.model_dump(), "idempotency_key": key}
         columns = ",".join(values)
-        placeholders = ",".join("?" for _ in values)
+        placeholders = ",".join("%s" for _ in values)
         await self.database.connection.execute(
             f"INSERT INTO files ({columns}) VALUES ({placeholders})", tuple(values.values())
         )
 
     async def get(self, file_id: str) -> dict | None:
-        async with self.database.lock:
-            async with self.database.connection.execute(
-                "SELECT * FROM files WHERE file_id=?", (file_id,)
-            ) as cursor:
-                row = await cursor.fetchone()
-        return dict(row) if row else None
+        async with self.database.read():
+            cursor = await self.database.connection.execute(
+                "SELECT * FROM files WHERE file_id=%s", (file_id,)
+            )
+            row = await cursor.fetchone()
+        return row
 
     async def list_by_kb(self, kb_id: str, limit: int, offset: int) -> tuple[list[dict], int]:
-        async with self.database.lock:
-            async with self.database.connection.execute(
-                "SELECT COUNT(*) FROM files WHERE kb_id=?", (kb_id,)
-            ) as cursor:
-                total = (await cursor.fetchone())[0]
-            async with self.database.connection.execute(
-                "SELECT * FROM files WHERE kb_id=? "
-                "ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?",
+        await require_knowledge_base(self.database, kb_id)
+        async with self.database.read():
+            cursor = await self.database.connection.execute(
+                "SELECT COUNT(*) AS count FROM files WHERE kb_id=%s", (kb_id,)
+            )
+            total = (await cursor.fetchone())["count"]
+            cursor = await self.database.connection.execute(
+                "SELECT * FROM files WHERE kb_id=%s "
+                "ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s",
                 (kb_id, limit, offset),
-            ) as cursor:
-                rows = [dict(row) for row in await cursor.fetchall()]
+            )
+            rows = await cursor.fetchall()
         return rows, total
 
     async def pending(self, kb_id: str) -> list[dict]:
         """待解析或上次失败的文件；已 recorded/indexed 的不重复处理。"""
-        async with self.database.lock:
-            async with self.database.connection.execute(
-                "SELECT * FROM files WHERE kb_id=? AND index_status IN ('not_indexed','failed') "
-                "ORDER BY created_at, rowid",
+        async with self.database.read():
+            cursor = await self.database.connection.execute(
+                "SELECT * FROM files WHERE kb_id=%s AND index_status IN ('not_indexed','failed') "
+                "ORDER BY created_at, id",
                 (kb_id,),
-            ) as cursor:
-                return [dict(row) for row in await cursor.fetchall()]
+            )
+            return await cursor.fetchall()
 
     async def set_status(self, file_id: str, status: str, error: str | None = None) -> None:
         async with self.database.transaction():
@@ -205,7 +159,7 @@ class FileRepository:
     async def set_status_within(self, file_id: str, status: str, error: str | None = None) -> None:
         """同一事务内调用，与切片写入原子提交。"""
         await self.database.connection.execute(
-            "UPDATE files SET index_status=?, index_error=?, updated_at=? WHERE file_id=?",
+            "UPDATE files SET index_status=%s, index_error=%s, updated_at=%s WHERE file_id=%s",
             (status, error, datetime.now(timezone.utc).isoformat(), file_id),
         )
 
@@ -213,7 +167,7 @@ class FileRepository:
         """启动对账：进程中断遗留的 parsing 状态回到 not_indexed。"""
         async with self.database.transaction():
             cursor = await self.database.connection.execute(
-                "UPDATE files SET index_status='not_indexed', index_error=NULL, updated_at=? "
+                "UPDATE files SET index_status='not_indexed', index_error=NULL, updated_at=%s "
                 "WHERE index_status='parsing'",
                 (datetime.now(timezone.utc).isoformat(),),
             )
@@ -224,8 +178,10 @@ class FileService:
     def __init__(self, repository: FileRepository, storage: Storage):
         self.repository = repository
         self.storage = storage
+        self.publication_lock = asyncio.Lock()
 
     async def upload(self, kb_id: str, file: UploadFile, key: str) -> FileRecord:
+        await require_knowledge_base(self.repository.database, kb_id)
         name, extension = safe_filename(file.filename)
         digest, size = hashlib.sha256(), 0
         while chunk := await file.read(256 * 1024):
@@ -238,25 +194,42 @@ class FileService:
         await file.seek(0)
         content_hash = digest.hexdigest()
 
+        async with self.repository.database.read():
+            existing = await self.repository.by_key(kb_id, key)
+        if existing:
+            if (existing["name"], existing["content_hash"]) != (name, content_hash):
+                raise ChatError("idempotency_conflict", "幂等键已用于其他文件。", 409)
+            return FileRecord(**existing)
+
         async def publish():
+            async with self.publication_lock:
+                return await publish_locked()
+
+        async def publish_locked():
             file_id = str(uuid4())
             stored = None
             try:
-                # Serialize key lookup and insert with existing DB writes; no network calls here.
+                storage_key = f"{kb_id}/{file_id}{extension}"
+
+                async def chunks():
+                    while chunk := await file.read(256 * 1024):
+                        yield chunk
+
+                stored = await self.storage.put(storage_key, chunks())
                 async with self.repository.database.transaction():
+                    await require_knowledge_base(self.repository.database, kb_id, lock=True)
+                    await self.repository.database.connection.execute(
+                        "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", (kb_id + ":" + key,)
+                    )
                     existing = await self.repository.by_key(kb_id, key)
                     if existing:
                         if (existing["name"], existing["content_hash"]) != (name, content_hash):
                             raise ChatError("idempotency_conflict", "幂等键已用于其他文件。", 409)
+                        # 竞争失败的暂存对象不属于已提交记录，可以移除。
+                        await self.storage.delete(stored.path)
+                        stored = None
                         return FileRecord(**existing)
 
-                    storage_key = f"{kb_id}/{file_id}{extension}"
-
-                    async def chunks():
-                        while chunk := await file.read(256 * 1024):
-                            yield chunk
-
-                    stored = await self.storage.put(storage_key, chunks())
                     now = datetime.now(timezone.utc).isoformat()
                     record = FileRecord(
                         file_id=file_id,

@@ -1,12 +1,13 @@
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_deepseek import ChatDeepSeek
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.base import BaseCheckpointSaver
 
-from app.agent.validation import complete_messages as _complete_messages
 from app.config import Settings
 from app.conversations import ConversationRepository
 from app.errors import ChatError
+from app.observability import Metrics
 from app.schemas import ConversationHistory, StoredMessage
 from app.tokenization import TokenCounter
 
@@ -17,7 +18,7 @@ class AgentRuntime:
     def __init__(
         self,
         settings: Settings,
-        checkpointer: AsyncSqliteSaver,
+        checkpointer: BaseCheckpointSaver,
         repository: ConversationRepository,
         model: BaseChatModel | None = None,
         retrieval_service=None,
@@ -28,6 +29,7 @@ class AgentRuntime:
         self.repository = repository
         self.model = model
         self.retrieval_service = retrieval_service
+        self.metrics = retrieval_service.metrics if retrieval_service else Metrics()
 
     @property
     def input_budget(self):
@@ -54,35 +56,9 @@ class AgentRuntime:
         )
 
     def get_model(self):
-        return (
-            self.model
-            if self.model is not None
-            else ChatDeepSeek(
-                model=self.settings.llm_model,
-                api_key=self.settings.llm_api_key,
-                api_base=self.settings.llm_base_url,
-                timeout=self.settings.llm_timeout_seconds,
-                max_tokens=self.settings.llm_max_tokens,
-                max_retries=0,
-            )
-        )
-
-    @staticmethod
-    def complete_messages(messages):
-        return _complete_messages(messages)
-
-    async def initialize_memory(self):
-        # Upgrade old single-thread checkpoints without replaying pending tasks.
-        for thread_id in self.repository.legacy_ids:
-            config = {"configurable": {"thread_id": thread_id}}
-            async for checkpoint in self.checkpointer.alist(config):
-                messages = checkpoint.checkpoint.get("channel_values", {}).get("messages", [])
-                if self.complete_messages(messages):
-                    await self.repository.migrate_checkpoint(
-                        thread_id, checkpoint.config["configurable"]["checkpoint_id"]
-                    )
-                    break
-        await self.repository.prune_unreferenced_runs()
+        if self.model is not None:
+            return self.model
+        return build_chat_model(self.settings)
 
     async def committed_messages(self, thread_id):
         # A concurrent successful turn may prune the previously committed run
@@ -115,3 +91,16 @@ class AgentRuntime:
                 if isinstance(m, (HumanMessage, AIMessage, ToolMessage))
             ],
         )
+
+
+def build_chat_model(settings):
+    factory = ChatDeepSeek if settings.llm_provider == "deepseek" else ChatOpenAI
+    return factory(
+        model=settings.llm_model,
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+        timeout=settings.llm_timeout_seconds,
+        max_tokens=settings.llm_max_tokens,
+        max_retries=0,
+        **({"use_responses_api": False} if settings.llm_provider == "openai" else {}),
+    )

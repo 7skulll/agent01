@@ -1,12 +1,12 @@
 import asyncio
 import hashlib
-import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
-from support import settings
+from support import settings, test_database
 
 from app.main import create_app
 from app.rag.file_api import LimitedMultipartParser
@@ -26,7 +26,7 @@ def upload(client, name="制度.txt", body=b"hello", key="key"):
 
 
 def rows():
-    with sqlite3.connect("data/chat.sqlite3") as connection:
+    with test_database() as connection:
         return connection.execute("SELECT file_id, name, index_status FROM files").fetchall()
 
 
@@ -54,7 +54,7 @@ def test_supported_types_and_hash(client, extension):
         ("a.exe", b"x", 415),
         ("a.pdf.exe", b"x", 415),
         ("无扩展名", b"x", 415),
-        ("a?.txt", b"x", 422),
+        ("a%00.txt", b"x", 422),
         ("中" * 84 + ".txt", b"x", 422),
         ("a.txt", b"x" * (MAX_FILE_BYTES + 1), 413),
     ],
@@ -79,6 +79,16 @@ def test_exact_size_limit_and_utf8_name_limit(client):
         ("..\\制度.txt", "制度.txt"),
         ("%E5%88%B6%E5%BA%A6.txt", "制度.txt"),
         ("%2e%2e%2f制度.txt", "制度.txt"),
+        (
+            "腾讯游戏MOBA品类：战略目标-项目组合-项目集-项目矩阵.pdf",
+            "腾讯游戏MOBA品类：战略目标-项目组合-项目集-项目矩阵.pdf",
+        ),
+        (
+            "多部门职能组织下AI嵌入农业项目:迭代开发方案.docx",
+            "多部门职能组织下AI嵌入农业项目:迭代开发方案.docx",
+        ),
+        ("【方案】需求？预算100%！[最终版]👩‍💻.pdf", "【方案】需求？预算100%！[最终版]👩‍💻.pdf"),
+        ("Q&A+预算=汇总,2026;修订.xlsx", "Q&A+预算=汇总,2026;修订.xlsx"),
     ],
 )
 def test_basename_and_chinese_decoding(client, name, expected):
@@ -86,7 +96,7 @@ def test_basename_and_chinese_decoding(client, name, expected):
     assert result.status_code == 201
     assert result.json()["name"] == expected
     assert objects()[0].parent == Path("data/files/default")
-    assert objects()[0].name == result.json()["file_id"] + ".txt"
+    assert objects()[0].name == result.json()["file_id"] + result.json()["extension"]
 
 
 def test_same_name_is_allowed_and_idempotency_is_content_based(client):
@@ -112,7 +122,7 @@ def test_database_failure_compensates_and_allows_retry(client, monkeypatch):
     original = repository.insert
 
     async def fail(*args):
-        raise sqlite3.OperationalError("injected")
+        raise psycopg.OperationalError("injected")
 
     monkeypatch.setattr(repository, "insert", fail)
     assert upload(client).status_code == 503
@@ -154,9 +164,16 @@ def test_contract_validation_and_database_indexes(client):
         ).status_code
         == 404
     )
-    with sqlite3.connect("data/chat.sqlite3") as connection:
-        names = {r[1] for r in connection.execute("PRAGMA index_list(files)")}
-    assert {"files_kb_name", "files_content_hash"} <= names
+    with test_database() as connection:
+        names = {
+            r[0]
+            for r in connection.execute(
+                "SELECT indexname FROM pg_indexes WHERE schemaname=current_schema() AND "
+                "tablename='files'"
+            )
+        }
+    assert "files_kb_created" in names
+    assert not {"files_kb_name", "files_content_hash"} & names
     schema = client.get("/openapi.json").json()
     assert (
         "multipart/form-data"
@@ -237,7 +254,7 @@ def test_interrupted_receive_closes_spooled_files(client, monkeypatch, interrupt
 def test_local_storage_cleanup_on_interruption_and_interface(tmp_path):
     async def run():
         storage = LocalStorage(tmp_path / "objects")
-        key = storage.key("default", "id", ".txt")
+        key = "default/id.txt"
 
         async def interrupted():
             yield b"partial"

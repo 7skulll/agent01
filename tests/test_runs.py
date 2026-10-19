@@ -1,9 +1,9 @@
 import asyncio
 import json
-import sqlite3
 from uuid import uuid4
 
 import httpx
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
@@ -322,7 +322,7 @@ def test_graph_completed_publication_failure_resumes_without_calling_model(monke
 
         async def fail_success(run_id, status, **kwargs):
             if status == "completed":
-                raise sqlite3.OperationalError("private-database-detail")
+                raise psycopg.OperationalError("private-database-detail")
             return await original(run_id, status, **kwargs)
 
         monkeypatch.setattr(repository, "finish", fail_success)
@@ -408,9 +408,9 @@ def test_paused_run_does_not_get_a_fresh_time_budget_on_resume():
         repository = client.app.state.run_service.repository
 
         async def exhaust_budget():
-            async with repository.lock:
+            async with repository.database.read():
                 await repository.connection.execute(
-                    "UPDATE runs SET elapsed_seconds=121 WHERE run_id=?", (run,)
+                    "UPDATE runs SET elapsed_seconds=121 WHERE run_id=%s", (run,)
                 )
                 await repository.connection.commit()
 
@@ -428,6 +428,17 @@ def test_shutdown_keeps_interrupted_run_for_manual_recovery_without_auto_executi
         client.portal.call(lambda: setattr(model, "gate", asyncio.Event()))
         conversation, run = create_run(client)
         wait_for_token(client, model)
+
+        async def wait_persisted_token():
+            # 模型已 yield 不代表流事件已提交；关闭前确认客户端可重放的部分输出。
+            repository = client.app.state.run_service.repository
+            async with asyncio.timeout(5):
+                while not any(
+                    event == "text_delta" for _, event, _ in await repository.events(run, 0)
+                ):
+                    await asyncio.sleep(0.01)
+
+        client.portal.call(wait_persisted_token)
     restored = StreamingModel()
     with TestClient(create_app(config, chat_model=restored)) as client:
         state = client.get(f"/api/v1/runs/{run}").json()
@@ -451,7 +462,7 @@ def test_publication_event_and_history_rollback_together(monkeypatch):
         async def fail_done(row, event, data):
             await original(row, event, data)
             if event == "done":
-                raise sqlite3.OperationalError("private-transaction-detail")
+                raise psycopg.OperationalError("private-transaction-detail")
 
         monkeypatch.setattr(repository, "_event", fail_done)
         conversation, run = create_run(client)
@@ -501,7 +512,7 @@ def test_storage_recovery_after_worker_settlement_failure_does_not_leave_busy_fo
         original = repository.finish
 
         async def unavailable(*args, **kwargs):
-            raise sqlite3.OperationalError("database temporarily unavailable")
+            raise psycopg.OperationalError("database temporarily unavailable")
 
         monkeypatch.setattr(repository, "finish", unavailable)
         conversation, run = create_run(client)
@@ -509,7 +520,7 @@ def test_storage_recovery_after_worker_settlement_failure_does_not_leave_busy_fo
         async def worker_exits():
             task = service.tasks[run]
             result = await asyncio.gather(task, return_exceptions=True)
-            assert isinstance(result[0], sqlite3.OperationalError)
+            assert isinstance(result[0], psycopg.OperationalError)
 
         client.portal.call(worker_exits)
         monkeypatch.setattr(repository, "finish", original)
@@ -570,7 +581,7 @@ def test_restart_reconciles_completed_graph_without_executing_model(monkeypatch)
         service = client.app.state.run_service
 
         async def stop_publication(*args, **kwargs):
-            raise sqlite3.OperationalError("simulate stop before publication")
+            raise psycopg.OperationalError("simulate stop before publication")
 
         monkeypatch.setattr(service.repository, "finish", stop_publication)
         conversation, run = create_run(client)

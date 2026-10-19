@@ -394,7 +394,7 @@ def _tail(text: str, max_tokens: int, counter=DEFAULT_COUNTER) -> str:
 
 def chunk_version(settings):
     values = [
-        "structure-bpe-v2",
+        "structure-bpe-v3",  # 表格列保留规则变化，显式 index 时重解析旧文件。
         TokenCounter(settings.embedding_tokenizer).version,
         settings.chunk_size_tokens,
         settings.chunk_overlap_tokens,

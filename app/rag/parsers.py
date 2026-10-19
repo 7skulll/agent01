@@ -524,16 +524,16 @@ def _table_cells(rows) -> list[list[str]]:
 
 
 def _table_text_from_cells(cells: list[list[str]]) -> str:
-    """把表格转成文本，表头拼进每一行，避免值失去语义。"""
+    """把表头拼进每行；空表头或超出表头的列以列号标注，保留所有非空值。"""
     if not cells:
         return ""
     header = cells[0]
     lines: list[str] = []
     for row in cells[1:]:
         pairs = [
-            f"{header[i]}: {value}"
+            f"{header[i] if i < len(header) and header[i].strip() else f'第{i + 1}列'}: {value}"
             for i, value in enumerate(row)
-            if value and i < len(header) and header[i]
+            if value
         ]
         if pairs:
             lines.append("; ".join(pairs))

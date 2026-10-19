@@ -1,13 +1,16 @@
-import sqlite3
 from typing import Annotated
+from urllib.parse import quote
 
+import psycopg
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
 from starlette.requests import ClientDisconnect
+from starlette.responses import Response
 
 from app.errors import ChatError
-from app.rag.files import DEFAULT_KB_ID, FileListResponse, FileRecord, IndexResponse
+from app.knowledge_bases import FileDeleteResult, GarbageCollectionResult
+from app.rag.files import FileListResponse, FileRecord, IndexResponse
 from app.rag.storage import MAX_FILE_BYTES, EmptyFileError, FileTooLargeError
 
 router = APIRouter(prefix="/api/v1", tags=["files"])
@@ -60,8 +63,6 @@ async def upload_file(
     def fail(status, code, message):
         return HTTPException(status_code=status, detail={"code": code, "message": message})
 
-    if kb_id != DEFAULT_KB_ID:
-        raise fail(404, "knowledge_base_not_found", "知识库不存在；当前仅支持 default。")
     key = idempotency_key.strip()
     if not key or not key.isascii() or any(ord(c) < 32 or ord(c) == 127 for c in key):
         raise fail(422, "invalid_idempotency_key", "幂等键必须为非空 ASCII 文本。")
@@ -99,7 +100,7 @@ async def upload_file(
         raise fail(422, "invalid_upload", "multipart 数据无效，仅接受一个文件。") from None
     except ClientDisconnect:
         raise fail(499, "client_disconnected", "上传连接已断开。") from None
-    except sqlite3.Error:
+    except psycopg.Error:
         raise fail(503, "storage_unavailable", "文件记录保存失败，请重试。") from None
     except OSError:
         raise fail(503, "file_storage_unavailable", "文件存储失败，请重试。") from None
@@ -109,16 +110,6 @@ async def upload_file(
             temporary.close()
 
 
-def _unknown_kb() -> HTTPException:
-    return HTTPException(
-        status_code=404,
-        detail={
-            "code": "knowledge_base_not_found",
-            "message": "知识库不存在；当前仅支持 default。",
-        },
-    )
-
-
 @router.get("/knowledge-bases/{kb_id}/files", response_model=FileListResponse)
 async def list_files(
     kb_id: str,
@@ -126,8 +117,6 @@ async def list_files(
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ):
-    if kb_id != DEFAULT_KB_ID:
-        raise _unknown_kb()
     items, total = await request.app.state.index_service.list_files(kb_id, limit, offset)
     return FileListResponse(items=items, total=total, limit=limit, offset=offset)
 
@@ -135,10 +124,32 @@ async def list_files(
 @router.post("/knowledge-bases/{kb_id}/index", response_model=IndexResponse, status_code=202)
 async def build_index(kb_id: str, request: Request):
     """批量触发该知识库下所有待解析文件的解析与切片。"""
-    if kb_id != DEFAULT_KB_ID:
-        raise _unknown_kb()
     try:
         scheduled = await request.app.state.index_service.schedule(kb_id)
     except ChatError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.detail()) from None
     return IndexResponse(kb_id=kb_id, scheduled=scheduled, count=len(scheduled))
+
+
+@router.get("/knowledge-bases/{kb_id}/files/{file_id}/download", response_class=Response)
+async def download_file(kb_id: str, file_id: str, request: Request):
+    name, content = await request.app.state.knowledge_base_service.download(kb_id, file_id)
+    return Response(
+        content,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": "attachment; filename*=UTF-8''" + quote(name, safe=""),
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.delete("/knowledge-bases/{kb_id}/files/{file_id}", response_model=FileDeleteResult)
+async def delete_file(kb_id: str, file_id: str, request: Request):
+    return await request.app.state.knowledge_base_service.delete_file(kb_id, file_id)
+
+
+@router.post("/maintenance/files/gc", response_model=GarbageCollectionResult, tags=["maintenance"])
+async def collect_orphan_files(request: Request):
+    return await request.app.state.knowledge_base_service.collect_orphans()

@@ -52,7 +52,6 @@ def test_query_rrf_is_completed_per_channel_before_weighted_channel_rrf():
             ],
             {key: row(key) for key in "abc"},
             body,
-            ["one", "two"],
         )
     assert [s.chunk_id for s in result] == ["b", "c", "a"]
     assert result[0].score == pytest.approx(0.5 / 61 + 0.5 / 63)

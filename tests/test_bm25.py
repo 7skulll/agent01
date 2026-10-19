@@ -1,14 +1,12 @@
 """BM25 分词、字段权重和独立重建的回归验证。"""
 
-import sqlite3
-
+import psycopg
 from fastapi.testclient import TestClient
-from support import settings
+from support import settings, test_database
 from test_rag_pipeline import BASE, Embeddings, db_rows, index, upload
 
 from app.main import create_app
 from app.rag.terms import document_terms
-from app.rag.vectors import index_version
 
 
 def keyword(client, query, **kwargs):
@@ -27,7 +25,7 @@ def test_fulltext_contains_heading_and_body_without_filename():
         target = upload(client, "# 数据库\n\n连接池配置。", name="unique_filename.md")
         index(client)
         row = db_rows("chunk_terms")[0]
-        assert set(row) == {"chunk_id", "file_id", "kb_id", "terms"}
+        assert {"chunk_id", "file_id", "kb_id", "terms", "tokens", "token_count"} == set(row)
         assert "数据库" in row["terms"] and "配置" in row["terms"]
         assert keyword(client, "数据库").json()["sources"][0]["file_id"] == target
         assert keyword(client, "unique_filename").json()["sources"] == []
@@ -38,7 +36,7 @@ def test_version_change_rebuilds_only_fulltext_and_supports_no_embedding_client(
         upload(client, "门禁卡遗失后请联系行政。")
         index(client)
         vectors, chunks = db_rows("chunk_vectors"), db_rows("chunks")
-    with sqlite3.connect("data/chat.sqlite3") as db:
+    with test_database() as db:
         db.execute("UPDATE lexical_indexes SET version='obsolete'")
     with TestClient(create_app(settings())) as client:
         assert keyword(client, "门禁卡").status_code == 503
@@ -49,30 +47,19 @@ def test_version_change_rebuilds_only_fulltext_and_supports_no_embedding_client(
         assert index(client)["count"] == 0
 
 
-def test_old_field_schema_migration_reuses_vectors_and_chunk_ids():
+def test_postgres_restart_reuses_vectors_and_chunk_ids():
     config = settings()
-    with TestClient(create_app(config, embedding_model=Embeddings())) as client:
-        upload(client)
-        index(client)
-        chunks = db_rows("chunks")
-        vector_data = [(v["vector"], v["input_hash"]) for v in db_rows("chunk_vectors")]
-    with sqlite3.connect("data/chat.sqlite3") as db:
-        db.execute("DROP TABLE chunk_terms")
-        db.execute(
-            "CREATE VIRTUAL TABLE chunk_terms USING fts5("
-            "chunk_id UNINDEXED,file_id UNINDEXED,kb_id UNINDEXED,terms,filename,title)"
-        )
-        db.execute(
-            "UPDATE chunk_vectors SET index_version=?",
-            (index_version(config, Embeddings(), "ordered-bigrams-v2"),),
-        )
     model = Embeddings()
     with TestClient(create_app(config, embedding_model=model)) as client:
-        assert keyword(client, "年假").status_code == 503
-        assert index(client)["count"] == 1
-        assert model.calls == []
+        upload(client)
+        index(client)
+        chunks, vectors = db_rows("chunks"), db_rows("chunk_vectors")
+    calls = len(model.calls)
+    with TestClient(create_app(config, embedding_model=model)) as client:
+        assert index(client)["count"] == 0
+        assert len(model.calls) == calls
         assert db_rows("chunks") == chunks
-        assert [(v["vector"], v["input_hash"]) for v in db_rows("chunk_vectors")] == vector_data
+        assert db_rows("chunk_vectors") == vectors
         assert keyword(client, "年假").json()["sources"]
 
 
@@ -80,18 +67,18 @@ def test_fulltext_rebuild_failure_rolls_back_and_can_retry_without_embedding(mon
     with TestClient(create_app(settings(), embedding_model=Embeddings())) as client:
         upload(client)
         index(client)
-        with sqlite3.connect("data/chat.sqlite3") as db:
+        with test_database() as db:
             db.execute("UPDATE lexical_indexes SET version='obsolete'")
         old_terms = db_rows("chunk_terms")
         old_metadata = db_rows("lexical_indexes")
     model = Embeddings()
     with TestClient(create_app(settings(), embedding_model=model)) as client:
-        lexical = client.app.state.vector_service.lexical
+        lexical = client.app.state.lexical_index
         original = lexical.replace_within
 
         async def fail(*args):
             await original(*args)
-            raise sqlite3.OperationalError("injected")
+            raise psycopg.OperationalError("injected")
 
         monkeypatch.setattr(lexical, "replace_within", fail)
         assert index(client)["count"] == 1
@@ -109,8 +96,8 @@ def test_missing_fulltext_table_invalidates_metadata_and_rebuilds_without_embedd
         upload(client)
         index(client)
         vectors, chunks = db_rows("chunk_vectors"), db_rows("chunks")
-    with sqlite3.connect("data/chat.sqlite3") as db:
-        db.execute("DROP TABLE chunk_terms")
+    with test_database() as db:
+        db.execute("DELETE FROM lexical_indexes")
     model = Embeddings()
     with TestClient(create_app(settings(), embedding_model=model)) as client:
         assert keyword(client, "年假").status_code == 503

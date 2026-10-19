@@ -1,0 +1,223 @@
+{
+  "scope": "synthetic_fixed_candidates_only_not_end_to_end_retrieval",
+  "model": "BAAI/bge-reranker-v2-m3",
+  "weight": 0.75,
+  "labelled_queries": 4,
+  "initial_mrr": 0.025,
+  "fused_mrr": 0.35416666666666663,
+  "no_answer_queries_returning_candidates": 2,
+  "rows": [
+    {
+      "id": "q03",
+      "query": "ZX-314 工作电压是多少？",
+      "relevant": [
+        "product_zx314"
+      ],
+      "candidate_count": 40,
+      "initial_rank": 40,
+      "fused_rank": 4,
+      "model_rank": 1,
+      "top_ids": [
+        "distractor-35",
+        "product_zx315",
+        "laptop_repair",
+        "product_zx314",
+        "incident"
+      ],
+      "top_rerank_scores": [
+        3.5378983739065006e-05,
+        0.8778353929519653,
+        5.8440869906917214e-05,
+        0.9990276098251343,
+        0.00015446468023583293
+      ],
+      "elapsed_ms": 673.64,
+      "diagnostics": {
+        "degraded": [],
+        "stage_ms": {
+          "rerank": 673.61
+        },
+        "rerank_applied": true,
+        "rerank_model": "BAAI/bge-reranker-v2-m3",
+        "rerank_count": 40,
+        "unreranked_count": 0
+      }
+    },
+    {
+      "id": "q05",
+      "query": "2026版采购制度，采购六万元要谁审批？",
+      "relevant": [
+        "policy_2026"
+      ],
+      "candidate_count": 40,
+      "initial_rank": 40,
+      "fused_rank": 3,
+      "model_rank": 1,
+      "top_ids": [
+        "leave_regular",
+        "policy_2025",
+        "policy_2026",
+        "expense_trip",
+        "leave_vendor"
+      ],
+      "top_rerank_scores": [
+        0.0012697428464889526,
+        0.9258844256401062,
+        0.9913365840911865,
+        0.00020250657689757645,
+        9.768074960447848e-05
+      ],
+      "elapsed_ms": 454.4,
+      "diagnostics": {
+        "degraded": [],
+        "stage_ms": {
+          "rerank": 454.26
+        },
+        "rerank_applied": true,
+        "rerank_model": "BAAI/bge-reranker-v2-m3",
+        "rerank_count": 40,
+        "unreranked_count": 0
+      }
+    },
+    {
+      "id": "q11",
+      "query": "登录口令想不起来了怎么办？",
+      "relevant": [
+        "password_reset"
+      ],
+      "candidate_count": 40,
+      "initial_rank": 40,
+      "fused_rank": 3,
+      "model_rank": 1,
+      "top_ids": [
+        "database_backup",
+        "database_access",
+        "password_reset",
+        "vpn",
+        "incident"
+      ],
+      "top_rerank_scores": [
+        0.006749757565557957,
+        0.0010814968263730407,
+        0.008162036538124084,
+        0.000867359631229192,
+        0.0009256917401216924
+      ],
+      "elapsed_ms": 477.86,
+      "diagnostics": {
+        "degraded": [],
+        "stage_ms": {
+          "rerank": 477.83
+        },
+        "rerank_applied": true,
+        "rerank_model": "BAAI/bge-reranker-v2-m3",
+        "rerank_count": 40,
+        "unreranked_count": 0
+      }
+    },
+    {
+      "id": "q15",
+      "query": "出差报销需要哪些凭证，什么时候提交？",
+      "relevant": [
+        "expense_trip"
+      ],
+      "candidate_count": 40,
+      "initial_rank": 40,
+      "fused_rank": 2,
+      "model_rank": 1,
+      "top_ids": [
+        "expense_meal",
+        "expense_trip",
+        "leave_regular",
+        "invoice",
+        "leave_vendor"
+      ],
+      "top_rerank_scores": [
+        0.10159521549940109,
+        0.9111069440841675,
+        0.0030167156364768744,
+        0.00724498787894845,
+        0.0003298494266346097
+      ],
+      "elapsed_ms": 586.71,
+      "diagnostics": {
+        "degraded": [],
+        "stage_ms": {
+          "rerank": 586.53
+        },
+        "rerank_applied": true,
+        "rerank_model": "BAAI/bge-reranker-v2-m3",
+        "rerank_count": 40,
+        "unreranked_count": 0
+      }
+    },
+    {
+      "id": "q21",
+      "query": "公司每年股票分红是多少？",
+      "relevant": [],
+      "candidate_count": 40,
+      "initial_rank": null,
+      "fused_rank": null,
+      "model_rank": null,
+      "top_ids": [
+        "leave_regular",
+        "expense_meal",
+        "invoice",
+        "policy_2026",
+        "password_reset"
+      ],
+      "top_rerank_scores": [
+        0.0006690000300295651,
+        0.0003531326074153185,
+        0.0004057733458466828,
+        0.00024733872851356864,
+        2.5501691197860055e-05
+      ],
+      "elapsed_ms": 490.82,
+      "diagnostics": {
+        "degraded": [],
+        "stage_ms": {
+          "rerank": 490.76
+        },
+        "rerank_applied": true,
+        "rerank_model": "BAAI/bge-reranker-v2-m3",
+        "rerank_count": 40,
+        "unreranked_count": 0
+      }
+    },
+    {
+      "id": "q22",
+      "query": "火星到地球需要飞多久？",
+      "relevant": [],
+      "candidate_count": 40,
+      "initial_rank": null,
+      "fused_rank": null,
+      "model_rank": null,
+      "top_ids": [
+        "expense_trip",
+        "shipping_domestic",
+        "database_backup",
+        "customer_refund",
+        "leave_regular"
+      ],
+      "top_rerank_scores": [
+        2.2284828446572646e-05,
+        3.764477150980383e-05,
+        1.9365770640433766e-05,
+        2.031500480370596e-05,
+        1.6564279576414265e-05
+      ],
+      "elapsed_ms": 476.35,
+      "diagnostics": {
+        "degraded": [],
+        "stage_ms": {
+          "rerank": 476.09
+        },
+        "rerank_applied": true,
+        "rerank_model": "BAAI/bge-reranker-v2-m3",
+        "rerank_count": 40,
+        "unreranked_count": 0
+      }
+    }
+  ]
+}

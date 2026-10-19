@@ -2,17 +2,17 @@
 
 import asyncio
 import hashlib
-import sqlite3
 from uuid import uuid4
 
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
-from support import ScriptModel, events, settings, wait_run
+from psycopg.rows import dict_row
+from support import ScriptModel, events, rag_answer, settings, test_database, wait_run
 
 from app.main import create_app
 from app.rag.embedding import EmbeddingError
-from app.rag.retrieval import RetrievalService, Source
 
 BASE = "/api/v1/knowledge-bases/default"
 
@@ -65,9 +65,9 @@ def index(client):
 
 
 def db_rows(table):
-    with sqlite3.connect("data/chat.sqlite3") as db:
-        db.row_factory = sqlite3.Row
-        return [dict(row) for row in db.execute(f"SELECT * FROM {table}")]
+    with test_database() as db:
+        db.row_factory = dict_row
+        return db.execute(f"SELECT * FROM {table}").fetchall()
 
 
 def rag_run(client, query="年假有多少天？", key=None):
@@ -133,13 +133,17 @@ def test_vector_publication_rollback_and_retry(monkeypatch):
 
         async def fail_publication(file_id, status, error=None):
             if status == "indexed":
-                raise sqlite3.OperationalError("injected")
+                raise psycopg.OperationalError("injected")
             await original(file_id, status, error)
 
         monkeypatch.setattr(repo, "set_status_within", fail_publication)
         index(client)
         assert db_rows("files")[0]["index_status"] == "recorded"
-        assert not db_rows("chunk_vectors") and not db_rows("chunk_terms")
+        assert not db_rows("chunk_vectors")
+        assert db_rows("chunk_terms")
+        assert client.post(BASE + "/search", json={"query": "年假", "mode": "keyword"}).json()[
+            "sources"
+        ]
         monkeypatch.setattr(repo, "set_status_within", original)
         index(client)
         assert len(db_rows("chunk_vectors")) == len(db_rows("chunk_terms")) == 1
@@ -157,7 +161,15 @@ def test_restart_reuses_vectors_and_model_change_requires_rebuild():
     changed = Embeddings()
     changed.model_name = "new-model"
     with TestClient(create_app(settings(), embedding_model=changed)) as client:
-        assert client.post(BASE + "/search", json={"query": "年假"}).json()["sources"] == []
+        assert (
+            client.post(BASE + "/search", json={"query": "年假", "mode": "vector"}).json()[
+                "sources"
+            ]
+            == []
+        )
+        assert client.post(BASE + "/search", json={"query": "年假", "mode": "keyword"}).json()[
+            "sources"
+        ]
         assert index(client)["count"] == 1
         assert db_rows("chunk_vectors")[0]["model"] == "new-model"
         assert db_rows("chunks")[0]["chunk_id"] == chunk_id
@@ -167,7 +179,7 @@ def test_restart_resets_only_vector_stage():
     with TestClient(create_app(settings())) as client:
         upload(client)
         index(client)
-    with sqlite3.connect("data/chat.sqlite3") as db:
+    with test_database() as db:
         db.execute("UPDATE files SET index_status='indexing'")
     with TestClient(create_app(settings(), embedding_model=Embeddings())) as client:
         assert db_rows("files")[0]["index_status"] == "recorded"
@@ -193,7 +205,7 @@ def test_fts_recalls_exact_term_when_dense_score_is_below_threshold():
 
 
 def test_rag_answer_publishes_sources_to_status_sse_and_history():
-    chat = ScriptModel(outputs=[AIMessage(content="年假为十天。[1]")])
+    chat = ScriptModel(outputs=[rag_answer(content="年假为十天。")])
     with TestClient(
         create_app(settings(), chat_model=chat, embedding_model=Embeddings())
     ) as client:
@@ -203,7 +215,7 @@ def test_rag_answer_publishes_sources_to_status_sse_and_history():
         result = wait_run(client, run_id)
         assert result["status"] == "completed", result
         assert result["sources"][0]["content"] == "员工年假为十天。"
-        assert "员工年假为十天。" in chat.seen[0][0].text
+        assert "员工年假为十天。" in chat.seen[0][-1].text
         assert '"sources"' in client.get(f"/api/v1/runs/{run_id}/events").text
         assert (
             client.get(f"/api/v1/conversations/{cid}").json()["messages"][-1]["content"]
@@ -222,12 +234,12 @@ def test_empty_retrieval_refuses_without_calling_chat_model():
         assert "未找到" in result["answer"] and not chat.seen
 
 
-@pytest.mark.parametrize("answer", ["年假为十天。[99]", "年假为十天。"])
-def test_invalid_or_missing_citations_are_not_published(answer):
+@pytest.mark.parametrize("source_ids", [[99], []])
+def test_invalid_or_missing_citations_are_not_published(source_ids):
     with TestClient(
         create_app(
             settings(),
-            chat_model=ScriptModel(outputs=[AIMessage(content=answer)]),
+            chat_model=ScriptModel(outputs=[rag_answer("年假为十天。", source_ids=source_ids)]),
             embedding_model=Embeddings(),
         )
     ) as client:
@@ -241,7 +253,7 @@ def test_invalid_or_missing_citations_are_not_published(answer):
 
 def test_resume_reuses_checkpointed_retrieval():
     embeddings = Embeddings()
-    chat = ScriptModel(outputs=[RuntimeError("temporary"), AIMessage(content="十天。[1]")])
+    chat = ScriptModel(outputs=[RuntimeError("temporary"), rag_answer(content="十天。")])
     with TestClient(create_app(settings(), chat_model=chat, embedding_model=embeddings)) as client:
         upload(client)
         index(client)
@@ -250,29 +262,6 @@ def test_resume_reuses_checkpointed_retrieval():
         assert client.post(f"/api/v1/runs/{run_id}/resume").status_code == 202
         assert wait_run(client, run_id)["status"] == "completed"
         assert len(embeddings.queries) == 1
-
-
-def test_context_budget_includes_decorations_and_renumbers_sources():
-    def source(index, content):
-        return Source(
-            citation_id=index,
-            chunk_id=str(index),
-            file_id="file",
-            name="手册",
-            content=content,
-            heading=None,
-            page=None,
-            kind="text",
-            score=1,
-            vector_score=1,
-        )
-
-    context, selected = RetrievalService.context([source(1, "字" * 100), source(2, "十天")], 40)
-    assert len(selected) == 1 and selected[0]["citation_id"] == 1
-    assert "[1]" in context and selected[0]["truncated"]
-    from app.rag.chunking import count_tokens
-
-    assert count_tokens(context) <= 40
 
 
 @pytest.mark.parametrize("bad", [[0.0, 0.0, 0.0], [float("nan"), 1.0, 0.0], [1.0, 0.0]])
@@ -330,7 +319,7 @@ def test_search_errors_and_rag_scope_idempotency():
     with TestClient(
         create_app(
             settings(),
-            chat_model=ScriptModel(outputs=[AIMessage(content="十天。[1]")]),
+            chat_model=ScriptModel(outputs=[rag_answer(content="十天。")]),
             embedding_model=Embeddings(),
         )
     ) as client:
@@ -393,7 +382,8 @@ def test_tokenizer_change_rechunks_and_chat_tokenizer_change_keeps_index():
     changed = settings(embedding_tokenizer="o200k_base")
     with TestClient(create_app(changed, embedding_model=model)) as client:
         response = client.post(BASE + "/search", json={"query": "年假", "mode": "hybrid"})
-        assert response.status_code == 200 and response.json()["sources"] == []
+        assert response.status_code == 200 and response.json()["sources"]
+        assert all(source["keyword_score"] is not None for source in response.json()["sources"])
         assert index(client)["count"] == 1
         new_ids = {row["chunk_id"] for row in db_rows("chunks")}
         assert old_ids.isdisjoint(new_ids)
@@ -414,14 +404,17 @@ def test_legacy_chunk_metadata_rebuilds_only_after_explicit_index():
         upload(client)
         index(client)
         old_id = db_rows("chunks")[0]["chunk_id"]
-    with sqlite3.connect("data/chat.sqlite3") as db:
-        db.execute("ALTER TABLE files DROP COLUMN chunk_version")
+    with test_database() as db:
+        db.execute("UPDATE files SET chunk_version=NULL")
         db.execute("UPDATE chunk_vectors SET index_version='legacy-version'")
     model = Embeddings()
     with TestClient(create_app(settings(), embedding_model=model)) as client:
         assert db_rows("files")[0]["chunk_version"] is None
         assert db_rows("chunks")[0]["chunk_id"] == old_id
-        assert client.post(BASE + "/search", json={"query": "年假"}).json()["sources"] == []
+        assert (
+            client.post(BASE + "/search", json={"query": "年假", "mode": "keyword"}).status_code
+            == 503
+        )
         assert index(client)["count"] == 1
         assert db_rows("chunks")[0]["chunk_id"] != old_id
 
@@ -453,8 +446,8 @@ def test_index_limits_formatted_embedding_and_input_hash_matches_sent_text():
 def test_real_token_usage_is_saved_in_sse_events():
     chat = ScriptModel(
         outputs=[
-            AIMessage(
-                content="年假十天。[1]",
+            rag_answer(
+                content="年假十天。",
                 usage_metadata={"input_tokens": 123, "output_tokens": 12, "total_tokens": 135},
             )
         ]

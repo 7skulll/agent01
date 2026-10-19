@@ -1,12 +1,12 @@
 """检索过滤、并行降级、多查询、重排、来源和追问改写的行为测试。"""
 
 import asyncio
-import sqlite3
 
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
-from support import ScriptModel, settings, wait_run
+from support import ScriptModel, rag_answer, settings, test_database, wait_run
 from test_rag_pipeline import BASE, Embeddings, index, rag_run, upload
 
 from app.main import create_app
@@ -52,8 +52,8 @@ def test_lexical_filter_is_applied_before_limit():
         stale = upload(client, "年假")
         current = upload(client, "员工年假为十天。")
         index(client)
-        with sqlite3.connect("data/chat.sqlite3") as db:
-            db.execute("UPDATE chunk_vectors SET index_version='old' WHERE file_id=?", (stale,))
+        with test_database() as db:
+            db.execute("UPDATE files SET index_status='failed' WHERE file_id=%s", (stale,))
         result = search(client, mode="keyword").json()
         assert result["sources"][0]["file_id"] == current
         assert result["diagnostics"]["keyword_count"] == 1
@@ -101,7 +101,7 @@ def test_keyword_failure_can_degrade_to_vector(monkeypatch):
         index(client)
 
         async def failed_keywords(*args):
-            raise sqlite3.OperationalError("injected")
+            raise psycopg.OperationalError("injected")
 
         monkeypatch.setattr(client.app.state.retrieval_service, "_keywords", failed_keywords)
         result = search(client).json()
@@ -180,7 +180,7 @@ def test_duplicate_content_keeps_alternative_sources():
         assert len(result["sources"][0]["alternatives"]) == 1
 
 
-def test_neighbors_are_same_section_and_only_budgeted_neighbors_enter_context():
+def test_neighbors_include_same_section_metadata_for_context_assembly():
     with TestClient(
         create_app(
             settings(chunk_size_tokens=64, chunk_overlap_tokens=8, retrieval_neighbor_chunks=1),
@@ -192,23 +192,23 @@ def test_neighbors_are_same_section_and_only_budgeted_neighbors_enter_context():
         result = search(client, top_k=1).json()
         source = Source(**result["sources"][0])
         assert source.supporting_chunks
-        context, selected = RetrievalService.context([source], 500)
-        assert "补充同节片段" in context
-        assert selected[0]["supporting_chunks"]
-        tiny, short = RetrievalService.context([source], 40)
-        from app.rag.chunking import count_tokens
-
-        assert count_tokens(tiny) <= 40
-        assert short[0]["truncated"] and not short[0]["supporting_chunks"]
+        assert all(
+            neighbor["file_id"] == source.file_id
+            and neighbor["heading"] == source.heading
+            and neighbor["page"] == source.page
+            and neighbor["kind"] == "text"
+            and abs(neighbor["chunk_index"] - source.chunk_index) == 1
+            for neighbor in source.supporting_chunks
+        )
 
 
 def test_followup_is_rewritten_and_query_plan_is_checkpointed():
     chat = ScriptModel(
         outputs=[
-            AIMessage(content="十天。[1]"),
+            rag_answer(content="十天。"),
             AIMessage(content='["年假需要谁审批？"]'),
             RuntimeError("temporary"),
-            AIMessage(content="主管审批。[1]"),
+            rag_answer(content="主管审批。"),
         ]
     )
     embeddings = Embeddings()
@@ -242,9 +242,9 @@ def test_followup_is_rewritten_and_query_plan_is_checkpointed():
 def test_invalid_query_plan_falls_back_without_losing_original_question():
     chat = ScriptModel(
         outputs=[
-            AIMessage(content="十天。[1]"),
+            rag_answer(content="十天。"),
             AIMessage(content="invalid JSON"),
-            AIMessage(content="十天。[1]"),
+            rag_answer(content="十天。"),
         ]
     )
     with TestClient(
@@ -311,7 +311,7 @@ def test_document_diversity_limits_one_file_without_discarding_other_files():
         assert len(sources) == 2 and {source["file_id"] for source in sources} == {first, second}
 
 
-def test_fastgpt_deduplication_ignores_punctuation_and_indentation():
+def test_deduplication_preserves_code_indentation():
     def source(index, content):
         return Source(
             citation_id=index,
@@ -328,20 +328,5 @@ def test_fastgpt_deduplication_ignores_punctuation_and_indentation():
     sources = RetrievalService._dedupe(
         [source(1, "if ready:\n    run()"), source(2, "if ready:\n        run()")]
     )
-    assert len(sources) == 1
-    assert sources[0].alternatives[0]["chunk_id"] == "2"
-
-
-def test_context_does_not_truncate_structured_content_to_fit():
-    source = Source(
-        citation_id=1,
-        chunk_id="1",
-        file_id="f",
-        name="table.xlsx",
-        content="字段: " + "值" * 100,
-        heading=None,
-        page=None,
-        kind="table",
-        score=1,
-    )
-    assert RetrievalService.context([source], 40) == ("", [])
+    assert len(sources) == 2
+    assert all(not source.alternatives for source in sources)

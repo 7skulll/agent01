@@ -15,6 +15,8 @@ from pydantic import BaseModel
 
 from app.config import Settings
 from app.errors import ChatError
+from app.knowledge_bases import require_knowledge_base
+from app.observability import Metrics
 from app.rag.chunking import chunk_blocks, chunk_version
 from app.rag.files import FileRepository, FileSummary
 from app.rag.parsers import ParseError, ParseOptions, parse
@@ -45,64 +47,15 @@ class IndexRepository:
     def __init__(self, database):
         self.database = database
 
-    _CREATE_CHUNKS = (
-        "CREATE TABLE IF NOT EXISTS chunks ("
-        "chunk_id TEXT PRIMARY KEY, kb_id TEXT NOT NULL, file_id TEXT NOT NULL, "
-        "chunk_index INTEGER NOT NULL, content TEXT NOT NULL, tokens INTEGER NOT NULL, "
-        "heading TEXT, heading_level INTEGER, kind TEXT NOT NULL, page INTEGER, "
-        "source_order INTEGER, created_at TEXT NOT NULL, UNIQUE(file_id, chunk_index))"
-    )
-
-    async def setup(self):
-        async with self.database.transaction():
-            await self._create_or_migrate()
-            async with self.database.connection.execute("PRAGMA table_info(files)") as cursor:
-                columns = {row["name"] for row in await cursor.fetchall()}
-            if "chunk_version" not in columns:
-                await self.database.connection.execute(
-                    "ALTER TABLE files ADD COLUMN chunk_version TEXT"
-                )
-            await self.database.connection.execute(
-                "CREATE INDEX IF NOT EXISTS chunks_file ON chunks(file_id)"
-            )
-
-    async def _create_or_migrate(self):
-        connection = self.database.connection
-        async with connection.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='chunks'"
-        ) as cursor:
-            row = await cursor.fetchone()
-        sql = row["sql"] if row else None
-        if sql is None:
-            await connection.execute(self._CREATE_CHUNKS)
-            return
-        if "source_order" in sql:
-            return
-        # 旧表把 kind 限制为 text/table 且缺少 heading_level/source_order；切片可重建，
-        # 直接迁移旧行到新表（旧行 kind 仍是 text/table，新 CHECK 已放宽）。
-        columns = (
-            "chunk_id, kb_id, file_id, chunk_index, content, tokens, heading, kind, page, "
-            "created_at"
-        )
-        await connection.execute("ALTER TABLE chunks RENAME TO chunks_old")
-        await connection.execute(self._CREATE_CHUNKS)
-        await connection.execute(f"INSERT INTO chunks ({columns}) SELECT {columns} FROM chunks_old")
-        await connection.execute("DROP TABLE chunks_old")
-
-    async def replace(self, file_id: str, records: list[ChunkRecord]) -> None:
-        """整体替换一个文件的切片，保证重解析不残留旧块。"""
-        async with self.database.transaction():
-            await self.replace_within(file_id, records)
-
     async def replace_within(self, file_id: str, records: list[ChunkRecord]) -> None:
         """同一事务内调用：先删旧块再插新块。"""
-        await self.database.connection.execute("DELETE FROM chunks WHERE file_id=?", (file_id,))
+        await self.database.connection.execute("DELETE FROM chunks WHERE file_id=%s", (file_id,))
         if not records:
             return
         await self.database.connection.executemany(
             "INSERT INTO chunks (chunk_id, kb_id, file_id, chunk_index, content, tokens, "
             "heading, heading_level, kind, page, source_order, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             [
                 (
                     record.chunk_id,
@@ -123,33 +76,33 @@ class IndexRepository:
         )
 
     async def outdated(self, kb_id, version):
-        async with self.database.lock:
-            async with self.database.connection.execute(
-                "SELECT file_id FROM files WHERE kb_id=? AND "
+        async with self.database.read():
+            cursor = await self.database.connection.execute(
+                "SELECT file_id FROM files WHERE kb_id=%s AND "
                 "index_status IN ('recorded','indexed') AND "
-                "(chunk_version IS NULL OR chunk_version!=?) ORDER BY created_at, rowid",
+                "(chunk_version IS NULL OR chunk_version!=%s) ORDER BY created_at, id",
                 (kb_id, version),
-            ) as cursor:
-                return [row[0] for row in await cursor.fetchall()]
+            )
+            return [row["file_id"] for row in await cursor.fetchall()]
 
     async def counts(self, file_ids: list[str]) -> dict[str, int]:
         if not file_ids:
             return {}
-        placeholders = ",".join("?" for _ in file_ids)
-        async with self.database.lock:
-            async with self.database.connection.execute(
+        placeholders = ",".join("%s" for _ in file_ids)
+        async with self.database.read():
+            cursor = await self.database.connection.execute(
                 f"SELECT file_id, COUNT(*) AS count FROM chunks "
                 f"WHERE file_id IN ({placeholders}) GROUP BY file_id",
                 tuple(file_ids),
-            ) as cursor:
-                return {row["file_id"]: row["count"] for row in await cursor.fetchall()}
+            )
+            return {row["file_id"]: row["count"] for row in await cursor.fetchall()}
 
     async def list_by_file(self, file_id: str) -> list[dict]:
-        async with self.database.lock:
-            async with self.database.connection.execute(
-                "SELECT * FROM chunks WHERE file_id=? ORDER BY chunk_index", (file_id,)
-            ) as cursor:
-                return [dict(row) for row in await cursor.fetchall()]
+        async with self.database.read():
+            cursor = await self.database.connection.execute(
+                "SELECT * FROM chunks WHERE file_id=%s ORDER BY chunk_index", (file_id,)
+            )
+            return await cursor.fetchall()
 
 
 class IndexService:
@@ -162,12 +115,17 @@ class IndexService:
         storage: Storage,
         settings: Settings,
         vector_service=None,
+        lexical=None,
+        *,
+        metrics=None,
     ):
         self.files = files
         self.index = index
         self.storage = storage
         self.settings = settings
         self.vector_service = vector_service
+        self.lexical = lexical
+        self.metrics = metrics or Metrics()
         self.counter = TokenCounter(settings.embedding_tokenizer)
         self.chunk_version = chunk_version(settings)
         self.tasks: dict[str, asyncio.Task] = {}
@@ -185,6 +143,11 @@ class IndexService:
     ) -> tuple[list[FileSummary], int]:
         rows, total = await self.files.list_by_kb(kb_id, limit, offset)
         counts = await self.index.counts([row["file_id"] for row in rows])
+        ready = (
+            await self.lexical.ready_files([row["file_id"] for row in rows])
+            if self.lexical
+            else set()
+        )
         items = [
             FileSummary(
                 file_id=row["file_id"],
@@ -195,6 +158,8 @@ class IndexService:
                 index_status=row["index_status"],
                 index_error=row["index_error"],
                 chunk_count=counts.get(row["file_id"], 0),
+                keyword_ready=row["file_id"] in ready,
+                keyword_error=row.get("lexical_error"),
                 created_at=row["created_at"],
                 updated_at=row["updated_at"],
             )
@@ -206,6 +171,7 @@ class IndexService:
         # 检查、查询待处理文件与注册任务必须串行，否则并发请求会各自创建 worker，
         # 而任务字典只保留最后一个，导致孤儿 worker 无法取消。
         async with self.schedule_lock:
+            await require_knowledge_base(self.files.database, kb_id)
             if self.closing:
                 raise ChatError("service_stopping", "服务正在关闭。", 503, True)
             task = self.tasks.get(kb_id)
@@ -216,10 +182,10 @@ class IndexService:
             pending = await self.files.pending(kb_id)
             file_ids = [row["file_id"] for row in pending]
             file_ids.extend(await self.index.outdated(kb_id, self.chunk_version))
-            if self.vector_service:
-                file_ids.extend(await self.vector_service.lexical.pending(kb_id))
-                if self.vector_service.model:
-                    file_ids.extend(await self.vector_service.pending(kb_id))
+            if self.lexical:
+                file_ids.extend(await self.lexical.pending(kb_id))
+            if self.vector_service and self.vector_service.model:
+                file_ids.extend(await self.vector_service.pending(kb_id))
             file_ids = list(dict.fromkeys(file_ids))
             if not file_ids:
                 return []
@@ -237,9 +203,21 @@ class IndexService:
                     or row.get("chunk_version") != self.chunk_version
                 ):
                     await self.parse_file(file_id)
+                if self.lexical:
+                    try:
+                        with self.metrics.span("lexical_index"):
+                            await self.lexical.rebuild(file_id, self.files, self.index)
+                    except Exception as exc:
+                        logger.warning(
+                            "lexical_index_failed file_id=%s type=%s", file_id, type(exc).__name__
+                        )
+                        async with self.files.database.transaction():
+                            await self.files.database.connection.execute(
+                                "UPDATE files SET lexical_error=%s WHERE file_id=%s",
+                                ("全文索引建立失败，请重试。", file_id),
+                            )
                 if self.vector_service:
                     await self.vector_service.index_file(file_id)
-                    await self.vector_service.lexical.rebuild(file_id, self.files, self.index)
             except Exception as exc:
                 # 单个文件的意外错误不应中断整批，也不应让批次任务静默失败。
                 logger.warning("index_file_failed file_id=%s type=%s", file_id, type(exc).__name__)
@@ -259,17 +237,19 @@ class IndexService:
             data = await self.storage.get(row["storage_path"])
             # 解析与切片是 CPU 密集的同步操作，放到线程执行，避免阻塞事件循环上的
             # 聊天流式输出、心跳和取消处理。
-            blocks = await asyncio.to_thread(parse, row["extension"], data, options)
-            chunks = await asyncio.to_thread(
-                chunk_blocks,
-                blocks,
-                self.settings.chunk_size_tokens,
-                self.settings.chunk_overlap_tokens,
-                self.settings.chunk_max_per_file,
-                self.counter,
-                row["name"],
-                embedding_limit(self.settings),
-            )
+            with self.metrics.span("parse"):
+                blocks = await asyncio.to_thread(parse, row["extension"], data, options)
+            with self.metrics.span("chunk"):
+                chunks = await asyncio.to_thread(
+                    chunk_blocks,
+                    blocks,
+                    self.settings.chunk_size_tokens,
+                    self.settings.chunk_overlap_tokens,
+                    self.settings.chunk_max_per_file,
+                    self.counter,
+                    row["name"],
+                    embedding_limit(self.settings),
+                )
         except ParseError as exc:
             await self._fail(file_id, str(exc))
             return
@@ -307,8 +287,10 @@ class IndexService:
                 await self.index.replace_within(file_id, records)
                 if self.vector_service:
                     await self.vector_service.invalidate_within(file_id)
+                if self.lexical:
+                    await self.lexical.invalidate_within(file_id)
                 await self.files.database.connection.execute(
-                    "UPDATE files SET chunk_version=? WHERE file_id=?",
+                    "UPDATE files SET chunk_version=%s,lexical_error=NULL WHERE file_id=%s",
                     (self.chunk_version, file_id),
                 )
                 await self.files.set_status_within(file_id, "recorded")

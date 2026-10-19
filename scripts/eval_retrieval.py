@@ -18,6 +18,7 @@ import httpx
 from app.config import Settings
 from app.main import create_app
 from app.rag.embedding import build_embedding_model
+from scripts._database import temporary_database
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -140,96 +141,98 @@ async def evaluate(args):
     if not queries:
         raise SystemExit("评估集没有查询，未执行 Embedding。")
     await embed(queries[0])
-    with tempfile.TemporaryDirectory(prefix="rag-baseline-") as directory:
-        root = Path(directory)
-        config = settings.model_copy(
-            update={
-                "chat_database_path": root / "eval.sqlite3",
-                "file_storage_path": root / "files",
-                "rag_query_rewrite": False,
-                "rag_query_expand": False,
-                "retrieval_neighbor_chunks": 0,
-                "retrieval_max_per_file": 20,
-                "retrieval_dense_weight": 0.5,
-            }
-        )
-        app = create_app(config, embedding_model=cached)
-        async with app.router.lifespan_context(app):
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url="http://eval"
-            ) as client:
-                base = "/api/v1/knowledge-bases/default"
-                file_ids = {}
-                for doc in dataset["documents"]:
-                    response = await client.post(
-                        base + "/files",
-                        files={
-                            "file": (
-                                f"{doc['id']}.md",
-                                f"# {doc['title']}\n\n{doc['text']}".encode(),
-                            )
-                        },
-                        headers={"Idempotency-Key": doc["id"]},
-                    )
-                    response.raise_for_status()
-                    file_ids[response.json()["file_id"]] = doc["id"]
-                (await client.post(base + "/index")).raise_for_status()
-                await app.state.index_service.wait()
-                files = (await client.get(base + "/files")).json()["items"]
-                if len(files) != len(dataset["documents"]) or any(
-                    item["index_status"] != "indexed" for item in files
-                ):
-                    raise SystemExit("评估索引失败；请检查 Embedding 配置、鉴权或网络。")
-                print(f"Indexed {len(files)} synthetic documents.", flush=True)
-                # 创建协程前去重，避免并发请求在缓存写入前重复调用远端。
-                await asyncio.gather(*(embed(query) for query in queries[1:]))
-                print(f"Embedded {len(cached.cache)} unique queries.", flush=True)
-                experiments = None
-                if getattr(args, "bm25_comparison", False):
-                    from scripts.bm25_experiment import compare_bm25
-
-                    experiments = await compare_bm25(
-                        app, client, base, dataset, file_ids, args.min_score
-                    )
-                    selected_variant = "fastgpt"
-                    runs = experiments[selected_variant]["runs"]
-                else:
-                    runs = await measure_modes(client, base, dataset, file_ids, args.min_score)
-                report = {
-                    "dataset_description": dataset["description"],
-                    "dataset_sha256": hashlib.sha256(args.dataset.read_bytes()).hexdigest(),
-                    "document_count": len(dataset["documents"]),
-                    "model": model.model_name,
-                    "dimension": model.dim,
-                    "parameters": {
-                        "fulltext_analyzer": "jieba-rs-hmm",
-                        "fusion": "channel_rrf_then_weighted_rrf",
-                        "dense_candidates": {"hybrid": 80, "vector": 100},
-                        "keyword_candidates": {"hybrid": 60, "keyword": 100},
-                        "similarity_filter": "vector_only",
-                        "dense_weight": 0.5,
-                        "rrf_k": 60,
-                        "min_score": args.min_score,
-                        "top_k": 10,
-                        "rewrite": False,
-                        "expand": False,
-                        "rerank": False,
-                        "neighbors": False,
-                    },
-                    "embedding_p50_ms": percentile(embedding_times, 0.5),
-                    "embedding_p95_ms": percentile(embedding_times, 0.95),
-                    "notes": [
-                        "仅人工合成小样本，不代表实际知识库质量。",
-                        "预计算相同查询向量用于公平比较；local_search 延迟不含远端调用。",
-                        "无答案问题只观察是否返回候选，不计入 Recall/MRR，不验证回答或拒答。",
-                    ],
-                    "runs": runs,
-                    "bm25_comparison": experiments,
-                    "selected_variant": selected_variant if experiments else None,
+    async with temporary_database(settings) as database_url:
+        with tempfile.TemporaryDirectory(prefix="rag-baseline-") as directory:
+            root = Path(directory)
+            config = settings.model_copy(
+                update={
+                    "database_url": database_url,
+                    "file_storage_path": root / "files",
+                    "rag_query_rewrite": False,
+                    "rag_query_expand": False,
+                    "rerank_enabled": False,
+                    "retrieval_neighbor_chunks": 0,
+                    "retrieval_max_per_file": 20,
+                    "retrieval_dense_weight": 0.5,
                 }
-                args.output.parent.mkdir(parents=True, exist_ok=True)
-                args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
-                print("Report:", args.output, flush=True)
+            )
+            app = create_app(config, embedding_model=cached)
+            async with app.router.lifespan_context(app):
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://eval"
+                ) as client:
+                    base = "/api/v1/knowledge-bases/default"
+                    file_ids = {}
+                    for doc in dataset["documents"]:
+                        response = await client.post(
+                            base + "/files",
+                            files={
+                                "file": (
+                                    f"{doc['id']}.md",
+                                    f"# {doc['title']}\n\n{doc['text']}".encode(),
+                                )
+                            },
+                            headers={"Idempotency-Key": doc["id"]},
+                        )
+                        response.raise_for_status()
+                        file_ids[response.json()["file_id"]] = doc["id"]
+                    (await client.post(base + "/index")).raise_for_status()
+                    await app.state.index_service.wait()
+                    files = (await client.get(base + "/files")).json()["items"]
+                    if len(files) != len(dataset["documents"]) or any(
+                        item["index_status"] != "indexed" for item in files
+                    ):
+                        raise SystemExit("评估索引失败；请检查 Embedding 配置、鉴权或网络。")
+                    print(f"Indexed {len(files)} synthetic documents.", flush=True)
+                    # 创建协程前去重，避免并发请求在缓存写入前重复调用远端。
+                    await asyncio.gather(*(embed(query) for query in queries[1:]))
+                    print(f"Embedded {len(cached.cache)} unique queries.", flush=True)
+                    experiments = None
+                    if getattr(args, "bm25_comparison", False):
+                        from scripts.bm25_experiment import compare_bm25
+
+                        experiments = await compare_bm25(
+                            app, client, base, dataset, file_ids, args.min_score
+                        )
+                        selected_variant = "fastgpt"
+                        runs = experiments[selected_variant]["runs"]
+                    else:
+                        runs = await measure_modes(client, base, dataset, file_ids, args.min_score)
+                    report = {
+                        "dataset_description": dataset["description"],
+                        "dataset_sha256": hashlib.sha256(args.dataset.read_bytes()).hexdigest(),
+                        "document_count": len(dataset["documents"]),
+                        "model": model.model_name,
+                        "dimension": model.dim,
+                        "parameters": {
+                            "fulltext_analyzer": "jieba-rs-hmm",
+                            "fusion": "channel_rrf_then_weighted_rrf",
+                            "dense_candidates": {"hybrid": 80, "vector": 100},
+                            "keyword_candidates": {"hybrid": 60, "keyword": 100},
+                            "similarity_filter": "vector_only",
+                            "dense_weight": 0.5,
+                            "rrf_k": 60,
+                            "min_score": args.min_score,
+                            "top_k": 10,
+                            "rewrite": False,
+                            "expand": False,
+                            "rerank": False,
+                            "neighbors": False,
+                        },
+                        "embedding_p50_ms": percentile(embedding_times, 0.5),
+                        "embedding_p95_ms": percentile(embedding_times, 0.95),
+                        "notes": [
+                            "仅人工合成小样本，不代表实际知识库质量。",
+                            "预计算相同查询向量用于公平比较；local_search 延迟不含远端调用。",
+                            "无答案问题只观察是否返回候选，不计入 Recall/MRR，不验证回答或拒答。",
+                        ],
+                        "runs": runs,
+                        "bm25_comparison": experiments,
+                        "selected_variant": selected_variant if experiments else None,
+                    }
+                    args.output.parent.mkdir(parents=True, exist_ok=True)
+                    args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+                    print("Report:", args.output, flush=True)
 
 
 def main():

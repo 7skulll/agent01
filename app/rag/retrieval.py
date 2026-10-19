@@ -1,8 +1,7 @@
 """FastGPT 文本召回流程：逐查询召回 → 路内 RRF → 两路加权 RRF。"""
 
 import asyncio
-import heapq
-import json
+import logging
 import math
 import time
 
@@ -10,10 +9,13 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.errors import ChatError
-from app.rag.chunking import chunk_version
+from app.knowledge_bases import require_knowledge_base
+from app.observability import Metrics, measured
 from app.rag.embedding import EmbeddingError
+from app.rag.reranking import RerankError
 from app.rag.vectors import validate_vectors
-from app.tokenization import DEFAULT_COUNTER
+
+logger = logging.getLogger(__name__)
 
 
 def recall_limits(mode):
@@ -82,20 +84,38 @@ class Source(BaseModel):
 class SearchResponse(BaseModel):
     query: str
     index_version: str | None
+    lexical_version: str | None = None
     sources: list[Source]
     queries: list[str] = Field(default_factory=list)
     diagnostics: dict = Field(default_factory=dict)
 
 
 class RetrievalService:
-    def __init__(self, vectors, vector_service, settings, reranker=None):
+    def __init__(
+        self, vectors, vector_service, settings, reranker=None, *, lexical=None, metrics=None
+    ):
         self.vectors, self.vector_service, self.settings = vectors, vector_service, settings
         self.reranker = reranker
+        self.lexical = lexical
+        self.metrics = metrics or Metrics()
 
-    async def search(self, kb_id, body):
+    @measured("retrieval")
+    async def search(self, kb_id, body, *, capture_trace=False):
+        try:
+            result = await self._search(kb_id, body, capture_trace=capture_trace)
+        except Exception:
+            self.metrics.increment("retrieval_results", outcome="error")
+            raise
+        for reason in result.diagnostics["degraded"]:
+            self.metrics.increment("retrieval_degradations", reason=reason)
+        self.metrics.increment(
+            "retrieval_results", outcome="empty" if not result.sources else "nonempty"
+        )
+        return result
+
+    async def _search(self, kb_id, body, *, capture_trace=False):
         """两路独立执行；可选步骤失败降级，全部启用的召回路径失败时报告错误。"""
-        if kb_id != "default":
-            raise ChatError("knowledge_base_not_found", "知识库不存在。", 404)
+        await require_knowledge_base(self.vectors.database, kb_id)
         queries = unique_queries([body.query, *body.queries])
         if any(len(query) > 4000 for query in queries):
             raise ChatError("invalid_query", "检索问题过长。", 422)
@@ -107,6 +127,7 @@ class RetrievalService:
             "fusion": "channel_rrf_then_weighted_rrf",
             "recall_limits": dict(zip(("vector", "keyword"), recall_limits(body.mode))),
             "rrf_k": 60,
+            "vector_search_mode": self.settings.vector_search_mode,
         }
         # 空范围是确定性的空结果，不依赖模型配置或外部服务的可用性。
         if body.file_ids == []:
@@ -116,6 +137,7 @@ class RetrievalService:
                 queries=queries,
                 sources=[],
                 index_version=self.vector_service.version,
+                lexical_version=self.lexical.version if self.lexical else None,
                 diagnostics=diagnostics,
             )
         tasks, names = [], []
@@ -144,7 +166,7 @@ class RetrievalService:
                 {key for items in recall_lists for key, _ in items}
             )
             if channel == "vector":
-                diagnostics["vector_scanned_count"] = len(rows)
+                diagnostics["vector_returned_count"] = len(rows)
             lookup.update(rows)
             lists.extend((channel, query, items) for query, items in zip(queries, recall_lists))
         if len(errors) == len(names):
@@ -152,18 +174,21 @@ class RetrievalService:
                 raise errors[0]
             raise ChatError("retrieval_unavailable", "检索暂时不可用。", 503, True)
         fusion_started = time.perf_counter()
-        candidates = self._fuse(lists, lookup, body, queries)
+        candidates = self._fuse(lists, lookup, body)
         if errors and not candidates:
             raise ChatError("retrieval_unavailable", "部分检索路径不可用，请稍后重试。", 503, True)
         diagnostics["fused_count"] = len(candidates)
         candidates = self._dedupe(candidates)
         diagnostics["deduplicated_count"] = len(candidates)
         diagnostics["stage_ms"]["fusion"] = round((time.perf_counter() - fusion_started) * 1000, 2)
+        self.metrics.observe("fusion", (time.perf_counter() - fusion_started))
+        if capture_trace:
+            diagnostics["trace"] = {"before_rerank": [s.model_dump() for s in candidates]}
         candidates = await self._rerank(body.rerank_query or body.query, candidates, diagnostics)
-        # FastGPT 只在纯向量模式或 rerank 模式应用相似度；混合原始分数没有统一阈值。
-        diagnostics["using_similarity_filter"] = (
-            body.mode == "vector" and not diagnostics["rerank_applied"]
-        )
+        if capture_trace:
+            diagnostics["trace"]["after_rerank"] = [s.model_dump() for s in candidates]
+        # 向量门槛独立于重排，不能因接入重排而无提示失效。
+        diagnostics["using_similarity_filter"] = body.mode == "vector"
         if diagnostics["using_similarity_filter"]:
             candidates = [source for source in candidates if source.vector_score >= body.min_score]
         selected, file_counts = [], {}
@@ -178,7 +203,8 @@ class RetrievalService:
         if self.settings.retrieval_neighbor_chunks and selected:
             neighbor_started = time.perf_counter()
             try:
-                selected = await self._expand_neighbors(kb_id, selected)
+                with self.metrics.span("neighbors"):
+                    selected = await self._expand_neighbors(kb_id, selected)
             except Exception:
                 diagnostics["degraded"].append("neighbors_failed")
             diagnostics["stage_ms"]["neighbors"] = round(
@@ -189,14 +215,20 @@ class RetrievalService:
             query=body.query,
             queries=queries,
             index_version=self.vector_service.version,
+            lexical_version=self.lexical.version if self.lexical else None,
             sources=selected,
             diagnostics=diagnostics,
         )
 
+    @measured("vector_recall")
     async def _dense(self, kb_id, body, queries):
         started = time.perf_counter()
         self.vector_service.require_model()
         try:
+            self.metrics.tokens(
+                "embedding_query",
+                estimated_input=sum(self.vector_service.counter.count(query) for query in queries),
+            )
             # 保留 embed_query 语义，使非对称 Embedding 模型能区分问题和文档。
             vectors = await asyncio.gather(
                 *(self.vector_service.model.embed_query(query) for query in queries)
@@ -205,95 +237,33 @@ class RetrievalService:
                 validate_vectors([vector], 1, self.vector_service.model.dim)
         except EmbeddingError as exc:
             raise ChatError("embedding_error", str(exc), 502, exc.retryable) from None
-        rows = await self.vectors.candidates(kb_id, self.vector_service.version, body.file_ids)
-        lists = await asyncio.to_thread(
-            self._cosine_lists, rows, vectors, recall_limits(body.mode)[0]
+        lists, rows = await self.vectors.search(
+            kb_id, self.vector_service.version, vectors, recall_limits(body.mode)[0], body.file_ids
         )
-        return (
-            lists,
-            {row["chunk_id"]: row for row in rows},
-            round((time.perf_counter() - started) * 1000, 2),
-        )
+        return lists, rows, round((time.perf_counter() - started) * 1000, 2)
 
-    def _cosine_lists(self, rows, queries, limit):
-        lists = []
-        # 本次多查询共用一次 JSON 解码，不为每个问题重复解析向量。
-        vectors = []
-        for row in rows:
-            vector = json.loads(row["vector"])
-            norm = math.hypot(*vector)
-            if norm and math.isfinite(norm):
-                vectors.append((row, [value / norm for value in vector]))
-        for query in queries:
-            query_norm = math.hypot(*query)
-            normalized_query = [value / query_norm for value in query]
-            scored = []
-            for row, vector in vectors:
-                if len(vector) != len(query):
-                    continue
-                score = sum(a * b for a, b in zip(vector, normalized_query))
-                scored.append((row["chunk_id"], score))
-            lists.append(
-                heapq.nsmallest(
-                    limit,
-                    scored,
-                    key=lambda item: (-item[1], item[0]),
-                )
-            )
-        return lists
-
+    @measured("keyword_recall")
     async def _keywords(self, kb_id, body, queries):
         started = time.perf_counter()
         lists, rows = [], {}
-        version = chunk_version(self.settings)
-        if await self.vector_service.lexical.has_stale_scope(
-            kb_id, body.file_ids, version, self.vector_service.version
-        ):
+        if await self.lexical.has_stale_scope(kb_id, body.file_ids):
             raise ChatError("keyword_index_outdated", "全文索引需要本地重建，请调用 index。", 503)
         for query in queries:
-            terms = await asyncio.to_thread(self.vector_service.lexical.query_terms, query)
+            terms = await asyncio.to_thread(self.lexical.query_terms, query)
             if not terms:
                 lists.append([])
                 continue
-            expression = " OR ".join('"' + term.replace('"', '""') + '"' for term in terms)
-            clauses = [
-                "chunk_terms MATCH ?",
-                "f.kb_id=?",
-                "f.index_status='indexed'",
-                "f.chunk_version=?",
-                "l.version=?",
-            ]
-            params = [
-                expression,
+            hits = await self.lexical.search(
                 kb_id,
-                version,
-                self.vector_service.lexical.version,
-            ]
-            # 状态、版本和用户文件范围先过滤，再 LIMIT；旧索引不得挤占候选池。
-            if self.vector_service.version:
-                clauses.append("v.index_version=?")
-                params.append(self.vector_service.version)
-            if body.file_ids is not None:
-                clauses.append("f.file_id IN (" + ",".join("?" for _ in body.file_ids) + ")")
-                params.extend(body.file_ids)
-            params.append(recall_limits(body.mode)[1])
-            async with self.vectors.database.lock:
-                async with self.vectors.database.connection.execute(
-                    "SELECT c.*, f.name, bm25(chunk_terms) AS lexical_score "
-                    "FROM chunk_terms JOIN chunks c ON c.chunk_id=chunk_terms.chunk_id "
-                    "JOIN files f ON f.file_id=c.file_id "
-                    "JOIN lexical_indexes l ON l.file_id=f.file_id "
-                    "JOIN chunk_vectors v ON v.chunk_id=c.chunk_id WHERE "
-                    + " AND ".join(clauses)
-                    + " ORDER BY lexical_score, c.chunk_id LIMIT ?",
-                    tuple(params),
-                ) as cursor:
-                    hits = [dict(row) for row in await cursor.fetchall()]
+                body.file_ids,
+                terms,
+                recall_limits(body.mode)[1],
+            )
             rows.update({row["chunk_id"]: row for row in hits})
             lists.append([(row["chunk_id"], -row["lexical_score"]) for row in hits])
         return lists, rows, round((time.perf_counter() - started) * 1000, 2)
 
-    def _fuse(self, lists, lookup, body, queries):
+    def _fuse(self, lists, lookup, body):
         evidence, grouped = {}, {"vector": [], "keyword": []}
         for channel, query, items in lists:
             grouped[channel].append(items)
@@ -339,11 +309,18 @@ class RetrievalService:
 
     @staticmethod
     def _dedupe(sources):
-        """同 FastGPT 按 q+a 的字母/数字归一化去重；额外保留来源回溯信息。"""
+        """按类型、标题和正文去重，保留符号、内部空白及代码缩进和来源信息。"""
+
+        def normalize(text):
+            return text.replace("\r\n", "\n").replace("\r", "\n")
+
         result, seen = [], {}
         for source in sources:
-            key = "".join(
-                char for char in (source.heading or "") + source.content if char.isalnum()
+            content = normalize(source.content)
+            key = (
+                source.kind,
+                normalize(source.heading or ""),
+                content if source.kind == "code" else content.strip(),
             )
             if key in seen:
                 seen[key].alternatives.append(
@@ -361,9 +338,16 @@ class RetrievalService:
         return result
 
     async def _rerank(self, query, candidates, diagnostics):
+        """重排成功后原子替换候选；纯模型排序或 RRF，阈值只解释模型原始分数。"""
         if self.reranker is None or not candidates:
             return candidates
+        weight = self.settings.retrieval_rerank_weight
+        threshold = self.settings.retrieval_rerank_min_score
+        if weight == 0 and threshold is None:
+            diagnostics["rerank_skipped"] = "zero_weight"
+            return candidates
         started = time.perf_counter()
+        outcome = "error"
         pool = candidates[: self.settings.retrieval_rerank_candidates]
         documents = [
             "\n".join(part for part in (s.name, s.heading, s.content) if part) for s in pool
@@ -371,30 +355,56 @@ class RetrievalService:
         try:
             async with asyncio.timeout(self.settings.retrieval_rerank_timeout_seconds):
                 scores = await self.reranker.rerank(query, documents)
-            if len(scores) != len(pool) or not all(math.isfinite(score) for score in scores):
+            if len(scores) != len(pool) or not all(
+                type(score) in (int, float) and math.isfinite(score) for score in scores
+            ):
                 raise ValueError("invalid rerank scores")
-            for source, score in zip(pool, scores):
-                source.rerank_score = score
-            # 使用名次融合，保留原始分数，避免批内归一化制造虚假的置信度。
-            ranked = sorted(pool, key=lambda s: (-s.rerank_score, s.chunk_id))
+            # 不修改原候选，后续处理发生异常时仍能完整回退；同分保留召回顺序。
+            pool = [
+                source.model_copy(update={"rerank_score": float(score)})
+                for source, score in zip(pool, scores)
+            ]
+            ranked = sorted(pool, key=lambda source: -source.rerank_score)
             ranks = {source.chunk_id: rank for rank, source in enumerate(ranked, 1)}
-            weight = self.settings.retrieval_rerank_weight
             for rank, source in enumerate(pool, 1):
-                source.score = (1 - weight) / (60 + rank) + weight / (60 + ranks[source.chunk_id])
+                source.score = (
+                    source.rerank_score
+                    if weight == 1
+                    else (1 - weight) / (60 + rank) + weight / (60 + ranks[source.chunk_id])
+                )
+            ranked = sorted(pool, key=lambda source: -source.score)
+            if threshold is not None:
+                ranked = [source for source in ranked if source.rerank_score >= threshold]
+            outcome = "ok"
             diagnostics["rerank_applied"] = True
+            diagnostics["rerank_strategy"] = "model" if weight == 1 else "rrf"
+            diagnostics["rerank_threshold"] = threshold
+            diagnostics["rerank_filtered_count"] = len(pool) - len(ranked)
+            diagnostics["rerank_model"] = getattr(self.reranker, "model_name", "injected")
             diagnostics["rerank_count"] = len(pool)
             diagnostics["unreranked_count"] = len(candidates) - len(pool)
-            # 仅重排候选池前缀；尾部保留原有顺序，供每文件数量限制后的补位使用。
-            # 尾部没有 rerank_score，不与新的融合分数直接比较。
-            return (
-                sorted(pool, key=lambda source: (-source.score, source.chunk_id))
-                + candidates[len(pool) :]
-            )
-        except Exception:
+            # 阈值开启后禁止未评分尾部补位，避免绕过过滤；否则仍保留尾部作多样性补位。
+            return ranked + (candidates[len(pool) :] if threshold is None else [])
+        except asyncio.CancelledError:
+            outcome = "cancelled"
+            raise
+        except Exception as exc:
             diagnostics["degraded"].append("rerank_failed")
+            reason = (
+                exc.code
+                if isinstance(exc, RerankError)
+                else (
+                    "timeout"
+                    if isinstance(exc, TimeoutError)
+                    else "invalid_response_or_adapter_error"
+                )
+            )
+            diagnostics["rerank_error"] = reason
+            logger.warning("rerank_failed reason=%s", reason)
             return candidates
         finally:
             diagnostics["stage_ms"]["rerank"] = round((time.perf_counter() - started) * 1000, 2)
+            self.metrics.observe("rerank", time.perf_counter() - started, outcome)
 
     async def _expand_neighbors(self, kb_id, sources):
         """一次回查同文件、同标题、同页的相邻正文，保留补充片段 ID。"""
@@ -402,10 +412,13 @@ class RetrievalService:
         seeds = [source for source in sources if source.kind == "text"]
         if not seeds:
             return sources
-        clauses, params = [], [kb_id, self.vector_service.version, self.vector_service.version]
+        clauses, params = [], [kb_id]
         for source in seeds:
             clauses.append(
-                "(c.file_id=? AND c.heading IS ? AND c.page IS ? AND c.chunk_index BETWEEN ? AND ?)"
+                "(c.file_id=%s AND c.heading IS NOT DISTINCT FROM %s AND c.page IS NOT "
+                "DISTINCT FROM %s AND c.chunk_index BETWEEN %s AND %s "
+                "AND EXISTS (SELECT 1 FROM chunks seed WHERE seed.chunk_id=%s "
+                "AND seed.file_id=c.file_id))"
             )
             params.extend(
                 [
@@ -414,19 +427,19 @@ class RetrievalService:
                     source.page,
                     source.chunk_index - radius,
                     source.chunk_index + radius,
+                    source.chunk_id,
                 ]
             )
-        async with self.vectors.database.lock:
-            async with self.vectors.database.connection.execute(
+        async with self.vectors.database.read():
+            cursor = await self.vectors.database.connection.execute(
                 "SELECT c.* FROM chunks c JOIN files f ON f.file_id=c.file_id "
-                "JOIN chunk_vectors v ON v.chunk_id=c.chunk_id "
-                "WHERE f.kb_id=? AND f.index_status='indexed' AND c.kind='text' "
-                "AND (? IS NULL OR v.index_version=?) AND ("
+                "WHERE f.kb_id=%s AND f.index_status IN ('recorded','indexing','indexed') "
+                "AND c.kind='text' AND ("
                 + " OR ".join(clauses)
                 + ") ORDER BY c.file_id, c.chunk_index",
                 tuple(params),
-            ) as cursor:
-                neighbors = [dict(row) for row in await cursor.fetchall()]
+            )
+            neighbors = await cursor.fetchall()
         used = {source.chunk_id for source in sources}
         for source in seeds:
             for row in neighbors:
@@ -440,44 +453,17 @@ class RetrievalService:
                     continue
                 used.add(row["chunk_id"])
                 source.supporting_chunks.append(
-                    {"chunk_id": row["chunk_id"], "page": row["page"], "content": row["content"]}
+                    {
+                        "chunk_id": row["chunk_id"],
+                        "page": row["page"],
+                        "content": row["content"],
+                        "file_id": row["file_id"],
+                        "chunk_index": row["chunk_index"],
+                        "kind": row["kind"],
+                        "heading": row["heading"],
+                    }
                 )
         return sources
-
-    @staticmethod
-    def context(sources, budget, counter=DEFAULT_COUNTER):
-        """完整块计预算；首条超长时裁剪正文，标注实际引用内容，绝不超限。"""
-        blocks, selected = [], []
-        for source in sources:
-            source = source.model_copy(deep=True, update={"citation_id": len(selected) + 1})
-            prefix = (
-                f"[{source.citation_id}] 文件：{source.name}；标题：{source.heading or ''}；"
-                f"页码：{source.page or ''}\n"
-            )
-            block = prefix + source.content
-            if counter.count("\n\n".join([*blocks, block])) > budget:
-                if blocks or counter.count(prefix) >= budget or source.kind != "text":
-                    continue
-                content = counter.take(source.content, budget, format_text=lambda t: prefix + t)
-                if not content.strip():
-                    continue
-                source.content = content
-                source.truncated = True
-                # 裁剪后不宣称所有扩展片段仍完整参与回答。
-                source.supporting_chunks = []
-                block = prefix + source.content
-            included = []
-            for neighbor in source.supporting_chunks:
-                addition = "\n\n补充同节片段：\n" + neighbor["content"]
-                if counter.count("\n\n".join([*blocks, block + addition])) > budget:
-                    continue
-                block += addition
-                source.content += addition
-                included.append(neighbor)
-            source.supporting_chunks = included
-            blocks.append(block)
-            selected.append(source.model_dump())
-        return "\n\n".join(blocks), selected
 
 
 router = APIRouter(prefix="/api/v1", tags=["retrieval"])

@@ -1,0 +1,272 @@
+{
+  "scope": "synthetic_fixed_candidates_only_not_end_to_end_retrieval",
+  "model": "BAAI/bge-reranker-v2-m3",
+  "weight": 1.0,
+  "batch_size": 64,
+  "max_input_tokens": 8192,
+  "threshold": null,
+  "strategy_mrr": {
+    "rrf_075": 0.3416666666666667,
+    "model": 1.0
+  },
+  "labelled_queries": 4,
+  "initial_mrr": 0.025,
+  "configured_mrr": 1.0,
+  "no_answer_queries_returning_candidates": 2,
+  "rows": [
+    {
+      "id": "q03",
+      "query": "ZX-314 工作电压是多少？",
+      "relevant": [
+        "product_zx314"
+      ],
+      "candidate_count": 40,
+      "initial_rank": 40,
+      "fused_rank": 1,
+      "model_rank": 1,
+      "strategy_ranks": {
+        "rrf_075": 5,
+        "model": 1
+      },
+      "top_ids": [
+        "product_zx314",
+        "product_zx315",
+        "incident",
+        "laptop_repair",
+        "shipping_domestic"
+      ],
+      "top_rerank_scores": [
+        0.9990322589874268,
+        0.8734734058380127,
+        0.0001496773329563439,
+        6.043282337486744e-05,
+        4.65376433567144e-05
+      ],
+      "elapsed_ms": 753.71,
+      "diagnostics": {
+        "degraded": [],
+        "stage_ms": {
+          "rerank": 753.48
+        },
+        "rerank_applied": true,
+        "rerank_strategy": "model",
+        "rerank_threshold": null,
+        "rerank_filtered_count": 0,
+        "rerank_model": "BAAI/bge-reranker-v2-m3",
+        "rerank_count": 40,
+        "unreranked_count": 0
+      }
+    },
+    {
+      "id": "q05",
+      "query": "2026版采购制度，采购六万元要谁审批？",
+      "relevant": [
+        "policy_2026"
+      ],
+      "candidate_count": 40,
+      "initial_rank": 40,
+      "fused_rank": 1,
+      "model_rank": 1,
+      "strategy_ranks": {
+        "rrf_075": 3,
+        "model": 1
+      },
+      "top_ids": [
+        "policy_2026",
+        "policy_2025",
+        "leave_regular",
+        "training",
+        "expense_trip"
+      ],
+      "top_rerank_scores": [
+        0.9912773370742798,
+        0.9258844256401062,
+        0.001301741460338235,
+        0.0005648954538628459,
+        0.00020386502728797495
+      ],
+      "elapsed_ms": 516.67,
+      "diagnostics": {
+        "degraded": [],
+        "stage_ms": {
+          "rerank": 516.42
+        },
+        "rerank_applied": true,
+        "rerank_strategy": "model",
+        "rerank_threshold": null,
+        "rerank_filtered_count": 0,
+        "rerank_model": "BAAI/bge-reranker-v2-m3",
+        "rerank_count": 40,
+        "unreranked_count": 0
+      }
+    },
+    {
+      "id": "q11",
+      "query": "登录口令想不起来了怎么办？",
+      "relevant": [
+        "password_reset"
+      ],
+      "candidate_count": 40,
+      "initial_rank": 40,
+      "fused_rank": 1,
+      "model_rank": 1,
+      "strategy_ranks": {
+        "rrf_075": 3,
+        "model": 1
+      },
+      "top_ids": [
+        "password_reset",
+        "database_backup",
+        "database_access",
+        "incident",
+        "vpn"
+      ],
+      "top_rerank_scores": [
+        0.008213398046791553,
+        0.006612623576074839,
+        0.0009670080617070198,
+        0.0008962097926996648,
+        0.0008753446745686233
+      ],
+      "elapsed_ms": 539.8,
+      "diagnostics": {
+        "degraded": [],
+        "stage_ms": {
+          "rerank": 537.88
+        },
+        "rerank_applied": true,
+        "rerank_strategy": "model",
+        "rerank_threshold": null,
+        "rerank_filtered_count": 0,
+        "rerank_model": "BAAI/bge-reranker-v2-m3",
+        "rerank_count": 40,
+        "unreranked_count": 0
+      }
+    },
+    {
+      "id": "q15",
+      "query": "出差报销需要哪些凭证，什么时候提交？",
+      "relevant": [
+        "expense_trip"
+      ],
+      "candidate_count": 40,
+      "initial_rank": 40,
+      "fused_rank": 1,
+      "model_rank": 1,
+      "strategy_ranks": {
+        "rrf_075": 2,
+        "model": 1
+      },
+      "top_ids": [
+        "expense_trip",
+        "expense_meal",
+        "invoice",
+        "customer_refund",
+        "leave_regular"
+      ],
+      "top_rerank_scores": [
+        0.9113592505455017,
+        0.10138610005378723,
+        0.0073188175447285175,
+        0.004239736590534449,
+        0.0029916325584053993
+      ],
+      "elapsed_ms": 506.65,
+      "diagnostics": {
+        "degraded": [],
+        "stage_ms": {
+          "rerank": 506.42
+        },
+        "rerank_applied": true,
+        "rerank_strategy": "model",
+        "rerank_threshold": null,
+        "rerank_filtered_count": 0,
+        "rerank_model": "BAAI/bge-reranker-v2-m3",
+        "rerank_count": 40,
+        "unreranked_count": 0
+      }
+    },
+    {
+      "id": "q21",
+      "query": "公司每年股票分红是多少？",
+      "relevant": [],
+      "candidate_count": 40,
+      "initial_rank": null,
+      "fused_rank": null,
+      "model_rank": null,
+      "strategy_ranks": {
+        "rrf_075": null,
+        "model": null
+      },
+      "top_ids": [
+        "leave_regular",
+        "invoice",
+        "expense_meal",
+        "policy_2026",
+        "training"
+      ],
+      "top_rerank_scores": [
+        0.0006690000300295651,
+        0.000402233621571213,
+        0.0003531326074153185,
+        0.0002377109631197527,
+        5.8372643252369016e-05
+      ],
+      "elapsed_ms": 481.82,
+      "diagnostics": {
+        "degraded": [],
+        "stage_ms": {
+          "rerank": 481.49
+        },
+        "rerank_applied": true,
+        "rerank_strategy": "model",
+        "rerank_threshold": null,
+        "rerank_filtered_count": 0,
+        "rerank_model": "BAAI/bge-reranker-v2-m3",
+        "rerank_count": 40,
+        "unreranked_count": 0
+      }
+    },
+    {
+      "id": "q22",
+      "query": "火星到地球需要飞多久？",
+      "relevant": [],
+      "candidate_count": 40,
+      "initial_rank": null,
+      "fused_rank": null,
+      "model_rank": null,
+      "strategy_ranks": {
+        "rrf_075": null,
+        "model": null
+      },
+      "top_ids": [
+        "shipping_domestic",
+        "expense_trip",
+        "customer_refund",
+        "database_backup",
+        "shipping_custom"
+      ],
+      "top_rerank_scores": [
+        3.764477150980383e-05,
+        2.2284828446572646e-05,
+        2.031500480370596e-05,
+        1.9365770640433766e-05,
+        1.8895661924034357e-05
+      ],
+      "elapsed_ms": 466.06,
+      "diagnostics": {
+        "degraded": [],
+        "stage_ms": {
+          "rerank": 465.81
+        },
+        "rerank_applied": true,
+        "rerank_strategy": "model",
+        "rerank_threshold": null,
+        "rerank_filtered_count": 0,
+        "rerank_model": "BAAI/bge-reranker-v2-m3",
+        "rerank_count": 40,
+        "unreranked_count": 0
+      }
+    }
+  ]
+}

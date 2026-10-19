@@ -1,11 +1,8 @@
-"""基础版：真实 FTS5 BM25、分词和查询/通道分级 RRF；高级能力须显式开启。"""
-
-import sqlite3
+"""基础版：真实 PostgreSQL BM25、分词和查询/通道分级 RRF；高级能力须显式开启。"""
 
 import pytest
 from fastapi.testclient import TestClient
-from langchain_core.messages import AIMessage
-from support import ScriptModel, settings, wait_run
+from support import ScriptModel, rag_answer, settings, test_database, wait_run
 from test_rag_pipeline import BASE, Embeddings, index, rag_run, upload
 
 from app.main import create_app
@@ -18,14 +15,14 @@ def test_document_analyzer_preserves_frequency_and_order():
     assert search_terms("年假 年假。alpha alpha") == ["年", "假", "alpha"]
 
 
-def test_fts5_uses_term_frequency_in_bm25_ranking():
+def test_bm25_uses_term_frequency_in_ranking():
     with TestClient(create_app(settings(), embedding_model=Embeddings())) as client:
         first = upload(client, "zeta zeta zeta alpha", name="a.txt")
         second = upload(client, "zeta alpha alpha alpha", name="b.txt")
         index(client)
-        with sqlite3.connect("data/chat.sqlite3") as db:
+        with test_database() as db:
             terms = db.execute(
-                "SELECT terms FROM chunk_terms WHERE file_id=?", (first,)
+                "SELECT terms FROM chunk_terms WHERE file_id=%s", (first,)
             ).fetchone()[0]
         assert terms.split().count("zeta") == 3
         result = client.post(BASE + "/search", json={"query": "zeta", "mode": "keyword"})
@@ -79,7 +76,7 @@ def test_single_query_fuses_channels_without_score_normalization(monkeypatch):
 
 def test_default_followup_uses_original_question_without_extra_model_call():
     embeddings = Embeddings()
-    chat = ScriptModel(outputs=[AIMessage(content="十天。[1]"), AIMessage(content="主管。[1]")])
+    chat = ScriptModel(outputs=[rag_answer(content="十天。"), rag_answer(content="主管。")])
     with TestClient(create_app(settings(), chat_model=chat, embedding_model=embeddings)) as client:
         upload(client, "年假为十天，申请需要主管审批。")
         index(client)

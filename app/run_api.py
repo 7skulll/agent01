@@ -1,23 +1,43 @@
 import asyncio
-import sqlite3
 from uuid import UUID, uuid4
 
+import psycopg
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from starlette.responses import StreamingResponse
 
+from app.conversations import ConversationNotFoundError
 from app.errors import ChatError
 from app.run_repository import TERMINAL_STATUSES
-from app.schemas import RunRequest, RunResponse
+from app.schemas import ConversationTurns, RunRequest, RunResponse
 from app.streaming import sse_frame
 
 router = APIRouter(prefix="/api/v1", tags=["runs"])
+
+
+@router.get("/conversations/{conversation_id}/turns", response_model=ConversationTurns)
+async def conversation_turns(
+    conversation_id: UUID,
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    async def operation(_):
+        try:
+            await request.app.state.runtime.repository.get(str(conversation_id))
+        except ConversationNotFoundError:
+            raise ChatError("conversation_not_found", "会话不存在。", 404) from None
+        return await request.app.state.run_service.repository.turns(
+            str(conversation_id), limit, offset
+        )
+
+    return await call(operation, conversation_id=str(conversation_id))
 
 
 async def call(operation, *, conversation_id=None, run_id=None):
     request_id = str(uuid4())
     try:
         return await operation(request_id)
-    except (ChatError, sqlite3.Error) as exc:
+    except (ChatError, psycopg.Error) as exc:
         error = (
             exc
             if isinstance(exc, ChatError)
@@ -118,7 +138,20 @@ async def run_events(
                     yield ": heartbeat\n\n"
                     heartbeat_at = clock
                 await asyncio.sleep(0.05)
-        except sqlite3.Error:
+        except ChatError as exc:
+            if exc.code != "run_not_found":
+                raise
+            yield sse_frame(
+                "stream_error",
+                {
+                    "code": "run_not_found",
+                    "message": "任务已删除。",
+                    "retryable": False,
+                    "http_status": 404,
+                    "run_id": str(run_id),
+                },
+            )
+        except psycopg.Error:
             # This is a subscription failure, not the task's business outcome.
             # No SSE id: keep the client's cursor on the last durable event.
             yield sse_frame(

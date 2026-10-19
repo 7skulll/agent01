@@ -16,6 +16,10 @@ def test_rag_settings_read_documented_and_legacy_dotenv_names(tmp_path, prefix):
                 f"{prefix}QUERY_REWRITE=false",
                 f"{prefix}QUERY_EXPAND=true",
                 f"{prefix}QUERY_TIMEOUT_SECONDS=7",
+                f"{prefix}HISTORY_TOKENS=1000",
+                f"{prefix}HISTORY_TURNS=2",
+                f"{prefix}NEIGHBOR_BUDGET_RATIO=0.1",
+                f"{prefix}ANSWER_JSON_MODE=false",
             ]
         )
     )
@@ -25,6 +29,10 @@ def test_rag_settings_read_documented_and_legacy_dotenv_names(tmp_path, prefix):
     assert config.rag_query_rewrite is False
     assert config.rag_query_expand is True
     assert config.rag_query_timeout_seconds == 7
+    assert config.rag_history_tokens == 1000
+    assert config.rag_history_turns == 2
+    assert config.rag_neighbor_budget_ratio == 0.1
+    assert config.rag_answer_json_mode is False
 
 
 def test_rag_settings_read_process_environment(monkeypatch):

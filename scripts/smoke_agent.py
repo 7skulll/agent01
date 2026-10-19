@@ -1,4 +1,4 @@
-"""Live test: cloud tool calling, then a follow-up after reopening the SQLite database."""
+"""Live test: cloud tool calling, then a follow-up after reopening the PostgreSQL database."""
 
 import argparse
 import json

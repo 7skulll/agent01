@@ -1,0 +1,900 @@
+{
+  "scope": "isolated_test_schema_real_embedding_rerank_chat",
+  "checks": [
+    {
+      "name": "startup_and_health"
+    },
+    {
+      "name": "upload_four_formats"
+    },
+    {
+      "name": "parse_chunk_embed_publish",
+      "chunk_count": 4
+    },
+    {
+      "name": "keyword_search_with_real_rerank",
+      "rerank_ms": 355.81
+    },
+    {
+      "name": "vector_search_with_real_rerank",
+      "rerank_ms": 179.44
+    },
+    {
+      "name": "hybrid_search_with_real_rerank",
+      "rerank_ms": 160.66
+    },
+    {
+      "name": "blank_header_values_searchable"
+    },
+    {
+      "name": "context_assembly_budget_and_snapshot",
+      "diagnostics": {
+        "candidate_count": 4,
+        "unit_count": 4,
+        "source_count": 4,
+        "merged_count": 0,
+        "overlap_chars_removed": 0,
+        "extracted_range_count": 0,
+        "skipped_reasons": {},
+        "neighbor_tokens": 0,
+        "assembly_version": "context-v1",
+        "evidence_budget": 4096,
+        "evidence_tokens": 180,
+        "history_tokens": 0,
+        "history_turns": 0,
+        "history_turns_dropped": 0,
+        "total_estimated_tokens": 448,
+        "input_budget": 13260,
+        "empty_reason": null,
+        "metadata_tokens": 96,
+        "history_scope_dropped": 0,
+        "duration_ms": 1.93,
+        "prompt_hash": "221c7666d5cb580a56d5ee9c0fdf0a8e7a31beb688ce0a960f99a54666889137",
+        "run_id": "2a084722-f2be-4a08-ba3b-dc69d70b9da6",
+        "conversation_id": "4d16801e-b722-4b29-a1a6-903af94295ae",
+        "thread_id": "4d16801e-b722-4b29-a1a6-903af94295ae",
+        "request_id": "7f9d0d0d-92b0-432b-b9a5-b27a2e607e04",
+        "event_seq": 10
+      }
+    },
+    {
+      "name": "real_chat_citations_sse_and_history",
+      "answer": "公司员工每年享有 **十天** 带薪年假 [1]；年假申请需要 **直属主管** 审批 [1]。"
+    },
+    {
+      "name": "pipeline_metrics_available"
+    },
+    {
+      "name": "restart_persistence_and_metrics_reset"
+    }
+  ],
+  "metrics": {
+    "started_at": "2026-10-16T07:07:00.434019+00:00",
+    "uptime_seconds": 4.883,
+    "counters": [
+      {
+        "name": "http_requests",
+        "labels": {
+          "method": "GET",
+          "route": "/api/v1/conversations/{thread_id}",
+          "status": "200"
+        },
+        "value": 1
+      },
+      {
+        "name": "http_requests",
+        "labels": {
+          "method": "GET",
+          "route": "/api/v1/health",
+          "status": "200"
+        },
+        "value": 1
+      },
+      {
+        "name": "http_requests",
+        "labels": {
+          "method": "GET",
+          "route": "/api/v1/knowledge-bases/{kb_id}/files",
+          "status": "200"
+        },
+        "value": 1
+      },
+      {
+        "name": "http_requests",
+        "labels": {
+          "method": "GET",
+          "route": "/api/v1/runs/{run_id}",
+          "status": "200"
+        },
+        "value": 25
+      },
+      {
+        "name": "http_requests",
+        "labels": {
+          "method": "GET",
+          "route": "/api/v1/runs/{run_id}/events",
+          "status": "200"
+        },
+        "value": 1
+      },
+      {
+        "name": "http_requests",
+        "labels": {
+          "method": "POST",
+          "route": "/api/v1/conversations",
+          "status": "201"
+        },
+        "value": 1
+      },
+      {
+        "name": "http_requests",
+        "labels": {
+          "method": "POST",
+          "route": "/api/v1/conversations/{conversation_id}/runs",
+          "status": "202"
+        },
+        "value": 1
+      },
+      {
+        "name": "http_requests",
+        "labels": {
+          "method": "POST",
+          "route": "/api/v1/knowledge-bases/{kb_id}/files",
+          "status": "201"
+        },
+        "value": 4
+      },
+      {
+        "name": "http_requests",
+        "labels": {
+          "method": "POST",
+          "route": "/api/v1/knowledge-bases/{kb_id}/index",
+          "status": "202"
+        },
+        "value": 1
+      },
+      {
+        "name": "http_requests",
+        "labels": {
+          "method": "POST",
+          "route": "/api/v1/knowledge-bases/{kb_id}/search",
+          "status": "200"
+        },
+        "value": 5
+      },
+      {
+        "name": "rerank_http_attempts",
+        "labels": {},
+        "value": 6
+      },
+      {
+        "name": "retrieval_results",
+        "labels": {
+          "outcome": "nonempty"
+        },
+        "value": 6
+      },
+      {
+        "name": "tokens_actual_input",
+        "labels": {
+          "stage": "answer"
+        },
+        "value": 313
+      },
+      {
+        "name": "tokens_actual_input",
+        "labels": {
+          "stage": "rerank"
+        },
+        "value": 591
+      },
+      {
+        "name": "tokens_actual_output",
+        "labels": {
+          "stage": "answer"
+        },
+        "value": 137
+      },
+      {
+        "name": "tokens_actual_output",
+        "labels": {
+          "stage": "rerank"
+        },
+        "value": 0
+      },
+      {
+        "name": "tokens_estimated_input",
+        "labels": {
+          "stage": "answer"
+        },
+        "value": 448
+      },
+      {
+        "name": "tokens_estimated_input",
+        "labels": {
+          "stage": "embedding_documents"
+        },
+        "value": 117
+      },
+      {
+        "name": "tokens_estimated_input",
+        "labels": {
+          "stage": "embedding_query"
+        },
+        "value": 79
+      },
+      {
+        "name": "tokens_estimated_input",
+        "labels": {
+          "stage": "rerank"
+        },
+        "value": 784
+      }
+    ],
+    "timings": [
+      {
+        "stage": "answer_model",
+        "outcome": "ok",
+        "count": 1,
+        "total_ms": 1584.608,
+        "mean_ms": 1584.608,
+        "max_ms": 1584.608,
+        "buckets": [
+          {
+            "le_ms": 10,
+            "count": 0
+          },
+          {
+            "le_ms": 50,
+            "count": 0
+          },
+          {
+            "le_ms": 100,
+            "count": 0
+          },
+          {
+            "le_ms": 250,
+            "count": 0
+          },
+          {
+            "le_ms": 500,
+            "count": 0
+          },
+          {
+            "le_ms": 1000,
+            "count": 0
+          },
+          {
+            "le_ms": 2500,
+            "count": 1
+          },
+          {
+            "le_ms": 5000,
+            "count": 1
+          },
+          {
+            "le_ms": 10000,
+            "count": 1
+          },
+          {
+            "le_ms": "+Inf",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "stage": "chunk",
+        "outcome": "ok",
+        "count": 4,
+        "total_ms": 0.707,
+        "mean_ms": 0.177,
+        "max_ms": 0.21,
+        "buckets": [
+          {
+            "le_ms": 10,
+            "count": 4
+          },
+          {
+            "le_ms": 50,
+            "count": 4
+          },
+          {
+            "le_ms": 100,
+            "count": 4
+          },
+          {
+            "le_ms": 250,
+            "count": 4
+          },
+          {
+            "le_ms": 500,
+            "count": 4
+          },
+          {
+            "le_ms": 1000,
+            "count": 4
+          },
+          {
+            "le_ms": 2500,
+            "count": 4
+          },
+          {
+            "le_ms": 5000,
+            "count": 4
+          },
+          {
+            "le_ms": 10000,
+            "count": 4
+          },
+          {
+            "le_ms": "+Inf",
+            "count": 4
+          }
+        ]
+      },
+      {
+        "stage": "context_assembly",
+        "outcome": "ok",
+        "count": 1,
+        "total_ms": 1.922,
+        "mean_ms": 1.922,
+        "max_ms": 1.922,
+        "buckets": [
+          {
+            "le_ms": 10,
+            "count": 1
+          },
+          {
+            "le_ms": 50,
+            "count": 1
+          },
+          {
+            "le_ms": 100,
+            "count": 1
+          },
+          {
+            "le_ms": 250,
+            "count": 1
+          },
+          {
+            "le_ms": 500,
+            "count": 1
+          },
+          {
+            "le_ms": 1000,
+            "count": 1
+          },
+          {
+            "le_ms": 2500,
+            "count": 1
+          },
+          {
+            "le_ms": 5000,
+            "count": 1
+          },
+          {
+            "le_ms": 10000,
+            "count": 1
+          },
+          {
+            "le_ms": "+Inf",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "stage": "embedding_documents",
+        "outcome": "ok",
+        "count": 4,
+        "total_ms": 784.852,
+        "mean_ms": 196.213,
+        "max_ms": 322.412,
+        "buckets": [
+          {
+            "le_ms": 10,
+            "count": 0
+          },
+          {
+            "le_ms": 50,
+            "count": 0
+          },
+          {
+            "le_ms": 100,
+            "count": 0
+          },
+          {
+            "le_ms": 250,
+            "count": 3
+          },
+          {
+            "le_ms": 500,
+            "count": 4
+          },
+          {
+            "le_ms": 1000,
+            "count": 4
+          },
+          {
+            "le_ms": 2500,
+            "count": 4
+          },
+          {
+            "le_ms": 5000,
+            "count": 4
+          },
+          {
+            "le_ms": 10000,
+            "count": 4
+          },
+          {
+            "le_ms": "+Inf",
+            "count": 4
+          }
+        ]
+      },
+      {
+        "stage": "fusion",
+        "outcome": "ok",
+        "count": 6,
+        "total_ms": 0.248,
+        "mean_ms": 0.041,
+        "max_ms": 0.105,
+        "buckets": [
+          {
+            "le_ms": 10,
+            "count": 6
+          },
+          {
+            "le_ms": 50,
+            "count": 6
+          },
+          {
+            "le_ms": 100,
+            "count": 6
+          },
+          {
+            "le_ms": 250,
+            "count": 6
+          },
+          {
+            "le_ms": 500,
+            "count": 6
+          },
+          {
+            "le_ms": 1000,
+            "count": 6
+          },
+          {
+            "le_ms": 2500,
+            "count": 6
+          },
+          {
+            "le_ms": 5000,
+            "count": 6
+          },
+          {
+            "le_ms": 10000,
+            "count": 6
+          },
+          {
+            "le_ms": "+Inf",
+            "count": 6
+          }
+        ]
+      },
+      {
+        "stage": "http",
+        "outcome": "ok",
+        "count": 41,
+        "total_ms": 1382.238,
+        "mean_ms": 33.713,
+        "max_ms": 362.243,
+        "buckets": [
+          {
+            "le_ms": 10,
+            "count": 35
+          },
+          {
+            "le_ms": 50,
+            "count": 36
+          },
+          {
+            "le_ms": 100,
+            "count": 36
+          },
+          {
+            "le_ms": 250,
+            "count": 38
+          },
+          {
+            "le_ms": 500,
+            "count": 41
+          },
+          {
+            "le_ms": 1000,
+            "count": 41
+          },
+          {
+            "le_ms": 2500,
+            "count": 41
+          },
+          {
+            "le_ms": 5000,
+            "count": 41
+          },
+          {
+            "le_ms": 10000,
+            "count": 41
+          },
+          {
+            "le_ms": "+Inf",
+            "count": 41
+          }
+        ]
+      },
+      {
+        "stage": "keyword_recall",
+        "outcome": "ok",
+        "count": 5,
+        "total_ms": 15.276,
+        "mean_ms": 3.055,
+        "max_ms": 5.58,
+        "buckets": [
+          {
+            "le_ms": 10,
+            "count": 5
+          },
+          {
+            "le_ms": 50,
+            "count": 5
+          },
+          {
+            "le_ms": 100,
+            "count": 5
+          },
+          {
+            "le_ms": 250,
+            "count": 5
+          },
+          {
+            "le_ms": 500,
+            "count": 5
+          },
+          {
+            "le_ms": 1000,
+            "count": 5
+          },
+          {
+            "le_ms": 2500,
+            "count": 5
+          },
+          {
+            "le_ms": 5000,
+            "count": 5
+          },
+          {
+            "le_ms": 10000,
+            "count": 5
+          },
+          {
+            "le_ms": "+Inf",
+            "count": 5
+          }
+        ]
+      },
+      {
+        "stage": "lexical_index",
+        "outcome": "ok",
+        "count": 4,
+        "total_ms": 12.645,
+        "mean_ms": 3.161,
+        "max_ms": 4.029,
+        "buckets": [
+          {
+            "le_ms": 10,
+            "count": 4
+          },
+          {
+            "le_ms": 50,
+            "count": 4
+          },
+          {
+            "le_ms": 100,
+            "count": 4
+          },
+          {
+            "le_ms": 250,
+            "count": 4
+          },
+          {
+            "le_ms": 500,
+            "count": 4
+          },
+          {
+            "le_ms": 1000,
+            "count": 4
+          },
+          {
+            "le_ms": 2500,
+            "count": 4
+          },
+          {
+            "le_ms": 5000,
+            "count": 4
+          },
+          {
+            "le_ms": 10000,
+            "count": 4
+          },
+          {
+            "le_ms": "+Inf",
+            "count": 4
+          }
+        ]
+      },
+      {
+        "stage": "parse",
+        "outcome": "ok",
+        "count": 4,
+        "total_ms": 7.752,
+        "mean_ms": 1.938,
+        "max_ms": 5.131,
+        "buckets": [
+          {
+            "le_ms": 10,
+            "count": 4
+          },
+          {
+            "le_ms": 50,
+            "count": 4
+          },
+          {
+            "le_ms": 100,
+            "count": 4
+          },
+          {
+            "le_ms": 250,
+            "count": 4
+          },
+          {
+            "le_ms": 500,
+            "count": 4
+          },
+          {
+            "le_ms": 1000,
+            "count": 4
+          },
+          {
+            "le_ms": 2500,
+            "count": 4
+          },
+          {
+            "le_ms": 5000,
+            "count": 4
+          },
+          {
+            "le_ms": 10000,
+            "count": 4
+          },
+          {
+            "le_ms": "+Inf",
+            "count": 4
+          }
+        ]
+      },
+      {
+        "stage": "rerank",
+        "outcome": "ok",
+        "count": 6,
+        "total_ms": 1215.486,
+        "mean_ms": 202.581,
+        "max_ms": 355.81,
+        "buckets": [
+          {
+            "le_ms": 10,
+            "count": 0
+          },
+          {
+            "le_ms": 50,
+            "count": 0
+          },
+          {
+            "le_ms": 100,
+            "count": 0
+          },
+          {
+            "le_ms": 250,
+            "count": 4
+          },
+          {
+            "le_ms": 500,
+            "count": 6
+          },
+          {
+            "le_ms": 1000,
+            "count": 6
+          },
+          {
+            "le_ms": 2500,
+            "count": 6
+          },
+          {
+            "le_ms": 5000,
+            "count": 6
+          },
+          {
+            "le_ms": 10000,
+            "count": 6
+          },
+          {
+            "le_ms": "+Inf",
+            "count": 6
+          }
+        ]
+      },
+      {
+        "stage": "retrieval",
+        "outcome": "ok",
+        "count": 6,
+        "total_ms": 1722.064,
+        "mean_ms": 287.011,
+        "max_ms": 417.737,
+        "buckets": [
+          {
+            "le_ms": 10,
+            "count": 0
+          },
+          {
+            "le_ms": 50,
+            "count": 0
+          },
+          {
+            "le_ms": 100,
+            "count": 0
+          },
+          {
+            "le_ms": 250,
+            "count": 2
+          },
+          {
+            "le_ms": 500,
+            "count": 6
+          },
+          {
+            "le_ms": 1000,
+            "count": 6
+          },
+          {
+            "le_ms": 2500,
+            "count": 6
+          },
+          {
+            "le_ms": 5000,
+            "count": 6
+          },
+          {
+            "le_ms": 10000,
+            "count": 6
+          },
+          {
+            "le_ms": "+Inf",
+            "count": 6
+          }
+        ]
+      },
+      {
+        "stage": "vector_index",
+        "outcome": "ok",
+        "count": 4,
+        "total_ms": 808.948,
+        "mean_ms": 202.237,
+        "max_ms": 338.56,
+        "buckets": [
+          {
+            "le_ms": 10,
+            "count": 0
+          },
+          {
+            "le_ms": 50,
+            "count": 0
+          },
+          {
+            "le_ms": 100,
+            "count": 0
+          },
+          {
+            "le_ms": 250,
+            "count": 3
+          },
+          {
+            "le_ms": 500,
+            "count": 4
+          },
+          {
+            "le_ms": 1000,
+            "count": 4
+          },
+          {
+            "le_ms": 2500,
+            "count": 4
+          },
+          {
+            "le_ms": 5000,
+            "count": 4
+          },
+          {
+            "le_ms": 10000,
+            "count": 4
+          },
+          {
+            "le_ms": "+Inf",
+            "count": 4
+          }
+        ]
+      },
+      {
+        "stage": "vector_recall",
+        "outcome": "ok",
+        "count": 3,
+        "total_ms": 496.807,
+        "mean_ms": 165.602,
+        "max_ms": 170.433,
+        "buckets": [
+          {
+            "le_ms": 10,
+            "count": 0
+          },
+          {
+            "le_ms": 50,
+            "count": 0
+          },
+          {
+            "le_ms": 100,
+            "count": 0
+          },
+          {
+            "le_ms": 250,
+            "count": 3
+          },
+          {
+            "le_ms": 500,
+            "count": 3
+          },
+          {
+            "le_ms": 1000,
+            "count": 3
+          },
+          {
+            "le_ms": 2500,
+            "count": 3
+          },
+          {
+            "le_ms": 5000,
+            "count": 3
+          },
+          {
+            "le_ms": 10000,
+            "count": 3
+          },
+          {
+            "le_ms": "+Inf",
+            "count": 3
+          }
+        ]
+      }
+    ],
+    "active": {
+      "answer_model": 0,
+      "chunk": 0,
+      "context_assembly": 0,
+      "embedding_documents": 0,
+      "http": 0,
+      "keyword_recall": 0,
+      "lexical_index": 0,
+      "parse": 0,
+      "retrieval": 0,
+      "vector_recall": 0
+    }
+  },
+  "temporary_schema_cleaned": true
+}

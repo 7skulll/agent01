@@ -48,11 +48,11 @@ class BaselineLexicalIndex(LexicalIndex):
 
 
 async def vector_fingerprint(database):
-    async with database.lock:
-        async with database.connection.execute(
+    async with database.read():
+        cursor = await database.connection.execute(
             "SELECT chunk_id,vector,input_hash,index_version FROM chunk_vectors ORDER BY chunk_id"
-        ) as cursor:
-            rows = [tuple(row) for row in await cursor.fetchall()]
+        )
+        rows = [tuple(row.values()) for row in await cursor.fetchall()]
     return hashlib.sha256(json.dumps(rows).encode()).hexdigest()
 
 
@@ -71,7 +71,7 @@ async def compare_bm25(app, client, base, dataset, file_ids, min_score):
         async with database.transaction():
             await database.connection.execute("DELETE FROM chunk_terms")
             await database.connection.execute("DELETE FROM lexical_indexes")
-        service.vector_service.lexical = lexical
+        service.lexical = lexical
         for file_id in file_ids:
             await lexical.rebuild(file_id, index_service.files, index_service.index)
         print("Variant:", label, flush=True)
