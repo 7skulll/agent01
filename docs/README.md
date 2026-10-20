@@ -14,8 +14,9 @@
 - [模型设置](model-settings.md)：自有 API Key、协议、保存与切换规则。
 - [日常管理](daily-management.md)：文件下载/删除、上传残留清理、会话管理及问答文件范围。
 - [重排审计第二版](rerank-audit.md)：全量合成集、分组指标与复现方法。
-- [同页 RAG 评测第一版](evaluation-v1.md)：指标、曲线、任务与操作口径。
-- [评测第二版规划](evaluation-v2-plan.md)：证据标注、实验对比与回答审核。
+- [同页 RAG 评测第三版](evaluation-v3.md)：当前指标口径、证据追踪、案例集、审核、重试与归档。
+- [同页 RAG 评测第一版](evaluation-v1.md)：历史指标、曲线与操作口径。
+- [评测第二版规划](evaluation-v2-plan.md)：证据标注、实验对比与回答审核的历史规划。
 - [后续路线图](context-assembly-plan.md)：尚未实施的质量评估和上下文第三版。
 
 ## 文档整理

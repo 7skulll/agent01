@@ -1,0 +1,386 @@
+{
+  "baseline": "6d442b92-170b-4f76-977d-5e054f84ce34",
+  "deleted_experiment": "b408f354-8474-4914-81ba-dab20fda9f6c",
+  "mode": "hybrid",
+  "rerank": "on",
+  "scope": "synthetic_two_cases_real_browser_backend_models",
+  "checks": [
+    "real_browser_create_version",
+    "real_rag_answer_refusal",
+    "multi_fact_context",
+    "isolated_budget_override",
+    "pending_review_persistence",
+    "paired_comparison",
+    "report_downloads",
+    "archive_delete",
+    "responsive_layout",
+    "real_rerank_applied_without_fallback",
+    "workspace_unchanged",
+    "restart_persistence"
+  ],
+  "results": [
+    {
+      "evaluation_id": "6d442b92-170b-4f76-977d-5e054f84ce34",
+      "options": {
+        "rerank": "on",
+        "context_tokens": 512
+      },
+      "statuses": [
+        "answered",
+        "insufficient_evidence"
+      ],
+      "summary": {
+        "k": 5,
+        "metrics": {
+          "precision": 0.2,
+          "recall": 1,
+          "hit": 1,
+          "mrr": 1,
+          "ndcg": 1
+        },
+        "metric_queries": 1,
+        "labelled_failures": 0,
+        "completed": 2,
+        "failed": 0,
+        "cancelled": 0,
+        "refusal_correct": 1,
+        "refusal_total": 1,
+        "false_refusals": 0,
+        "answerable_total": 1,
+        "partial_label_queries": 0,
+        "refusal_attempted": 1,
+        "answerable_attempted": 1,
+        "context_evidence_queries": 1,
+        "context_evidence_complete": 1,
+        "reviewed": 0,
+        "curves": [
+          {
+            "k": 1,
+            "precision": 1,
+            "recall": 1,
+            "hit": 1,
+            "mrr": 1,
+            "ndcg": 1
+          },
+          {
+            "k": 3,
+            "precision": 0.3333333333333333,
+            "recall": 1,
+            "hit": 1,
+            "mrr": 1,
+            "ndcg": 1
+          },
+          {
+            "k": 5,
+            "precision": 0.2,
+            "recall": 1,
+            "hit": 1,
+            "mrr": 1,
+            "ndcg": 1
+          },
+          {
+            "k": 10,
+            "precision": 0.1,
+            "recall": 1,
+            "hit": 1,
+            "mrr": 1,
+            "ndcg": 1
+          },
+          {
+            "k": 20,
+            "precision": 0.05,
+            "recall": 1,
+            "hit": 1,
+            "mrr": 1,
+            "ndcg": 1
+          }
+        ]
+      },
+      "usage": {
+        "known_tokens": 889,
+        "known_queries": 2,
+        "unknown_queries": 0,
+        "new_model_calls": 2
+      },
+      "cases": [
+        {
+          "query": "员工每年有多少天带薪年假，谁审批？",
+          "answer": "员工每年享有十天带薪年假；申请需要直属主管审批。[1]",
+          "answer_status": "answered",
+          "elapsed_ms": 2018.68,
+          "source_count": 1,
+          "context_source_count": 1,
+          "rerank_applied": true,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_count": 1,
+          "rerank_scores": [
+            0.9734366536140442
+          ],
+          "evidence": {
+            "valid": true,
+            "causes": [],
+            "groups": [
+              {
+                "fact": "年假天数",
+                "stages": {
+                  "parsed": true,
+                  "context": true,
+                  "reranked": true,
+                  "selected": true,
+                  "retrieved": true
+                },
+                "alternatives": [
+                  {
+                    "page": null,
+                    "quote": "每年享有十天带薪年假",
+                    "stages": {
+                      "parsed": true,
+                      "context": true,
+                      "reranked": true,
+                      "selected": true,
+                      "retrieved": true
+                    },
+                    "file_id": "f04ec239-3665-4e81-ab87-377ac30ff0fd",
+                    "content_hash": "0d0ac51af049dc6d9601f70ade8a9e8703c39e907571aded79ec58a1d19b67c4",
+                    "anchor_status": "matched"
+                  }
+                ]
+              },
+              {
+                "fact": "审批要求",
+                "stages": {
+                  "parsed": true,
+                  "context": true,
+                  "reranked": true,
+                  "selected": true,
+                  "retrieved": true
+                },
+                "alternatives": [
+                  {
+                    "page": null,
+                    "quote": "申请需要直属主管审批",
+                    "stages": {
+                      "parsed": true,
+                      "context": true,
+                      "reranked": true,
+                      "selected": true,
+                      "retrieved": true
+                    },
+                    "file_id": "f04ec239-3665-4e81-ab87-377ac30ff0fd",
+                    "content_hash": "0d0ac51af049dc6d9601f70ade8a9e8703c39e907571aded79ec58a1d19b67c4",
+                    "anchor_status": "matched"
+                  }
+                ]
+              }
+            ],
+            "coverage": {
+              "parsed": 1,
+              "context": 1,
+              "reranked": 1,
+              "selected": 1,
+              "retrieved": 1
+            },
+            "context_complete": true
+          }
+        },
+        {
+          "query": "员工生日礼金的精确金额是多少？",
+          "answer": "现有资料不足以确认该问题的答案，请补充包含所需信息的资料。",
+          "answer_status": "insufficient_evidence",
+          "elapsed_ms": 1737.24,
+          "source_count": 1,
+          "context_source_count": 1,
+          "rerank_applied": true,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_count": 1,
+          "rerank_scores": [
+            0.00032998216920532286
+          ]
+        }
+      ]
+    },
+    {
+      "evaluation_id": "b408f354-8474-4914-81ba-dab20fda9f6c",
+      "options": {
+        "rerank": "on",
+        "context_tokens": 1024
+      },
+      "statuses": [
+        "answered",
+        "insufficient_evidence"
+      ],
+      "summary": {
+        "k": 5,
+        "metrics": {
+          "precision": 0.2,
+          "recall": 1,
+          "hit": 1,
+          "mrr": 1,
+          "ndcg": 1
+        },
+        "metric_queries": 1,
+        "labelled_failures": 0,
+        "completed": 2,
+        "failed": 0,
+        "cancelled": 0,
+        "refusal_correct": 1,
+        "refusal_total": 1,
+        "false_refusals": 0,
+        "answerable_total": 1,
+        "partial_label_queries": 0,
+        "refusal_attempted": 1,
+        "answerable_attempted": 1,
+        "context_evidence_queries": 1,
+        "context_evidence_complete": 1,
+        "reviewed": 0,
+        "curves": [
+          {
+            "k": 1,
+            "precision": 1,
+            "recall": 1,
+            "hit": 1,
+            "mrr": 1,
+            "ndcg": 1
+          },
+          {
+            "k": 3,
+            "precision": 0.3333333333333333,
+            "recall": 1,
+            "hit": 1,
+            "mrr": 1,
+            "ndcg": 1
+          },
+          {
+            "k": 5,
+            "precision": 0.2,
+            "recall": 1,
+            "hit": 1,
+            "mrr": 1,
+            "ndcg": 1
+          },
+          {
+            "k": 10,
+            "precision": 0.1,
+            "recall": 1,
+            "hit": 1,
+            "mrr": 1,
+            "ndcg": 1
+          },
+          {
+            "k": 20,
+            "precision": 0.05,
+            "recall": 1,
+            "hit": 1,
+            "mrr": 1,
+            "ndcg": 1
+          }
+        ]
+      },
+      "usage": {
+        "known_tokens": 894,
+        "known_queries": 2,
+        "unknown_queries": 0,
+        "new_model_calls": 2
+      },
+      "cases": [
+        {
+          "query": "员工每年有多少天带薪年假，谁审批？",
+          "answer": "员工每年享有十天带薪年假；申请需要直属主管审批。[1]",
+          "answer_status": "answered",
+          "elapsed_ms": 2024.88,
+          "source_count": 1,
+          "context_source_count": 1,
+          "rerank_applied": true,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_count": 1,
+          "rerank_scores": [
+            0.9734366536140442
+          ],
+          "evidence": {
+            "valid": true,
+            "causes": [],
+            "groups": [
+              {
+                "fact": "年假天数",
+                "stages": {
+                  "parsed": true,
+                  "context": true,
+                  "reranked": true,
+                  "selected": true,
+                  "retrieved": true
+                },
+                "alternatives": [
+                  {
+                    "page": null,
+                    "quote": "每年享有十天带薪年假",
+                    "stages": {
+                      "parsed": true,
+                      "context": true,
+                      "reranked": true,
+                      "selected": true,
+                      "retrieved": true
+                    },
+                    "file_id": "f04ec239-3665-4e81-ab87-377ac30ff0fd",
+                    "content_hash": "0d0ac51af049dc6d9601f70ade8a9e8703c39e907571aded79ec58a1d19b67c4",
+                    "anchor_status": "matched"
+                  }
+                ]
+              },
+              {
+                "fact": "审批要求",
+                "stages": {
+                  "parsed": true,
+                  "context": true,
+                  "reranked": true,
+                  "selected": true,
+                  "retrieved": true
+                },
+                "alternatives": [
+                  {
+                    "page": null,
+                    "quote": "申请需要直属主管审批",
+                    "stages": {
+                      "parsed": true,
+                      "context": true,
+                      "reranked": true,
+                      "selected": true,
+                      "retrieved": true
+                    },
+                    "file_id": "f04ec239-3665-4e81-ab87-377ac30ff0fd",
+                    "content_hash": "0d0ac51af049dc6d9601f70ade8a9e8703c39e907571aded79ec58a1d19b67c4",
+                    "anchor_status": "matched"
+                  }
+                ]
+              }
+            ],
+            "coverage": {
+              "parsed": 1,
+              "context": 1,
+              "reranked": 1,
+              "selected": 1,
+              "retrieved": 1
+            },
+            "context_complete": true
+          }
+        },
+        {
+          "query": "员工生日礼金的精确金额是多少？",
+          "answer": "现有资料不足以确认该问题的答案，请补充包含所需信息的资料。",
+          "answer_status": "insufficient_evidence",
+          "elapsed_ms": 1851.59,
+          "source_count": 1,
+          "context_source_count": 1,
+          "rerank_applied": true,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_count": 1,
+          "rerank_scores": [
+            0.0003316252550575882
+          ]
+        }
+      ]
+    }
+  ],
+  "started_at": "2026-10-19T07:34:44.325983+00:00",
+  "finished_at": "2026-10-19T07:34:57.990452+00:00",
+  "temporary_schema_cleaned": true
+}

@@ -2,6 +2,8 @@ import json
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from psycopg.types.json import Jsonb
+
 from app.conversations import ConversationRepository
 from app.errors import ChatError
 from app.knowledge_bases import require_knowledge_base
@@ -185,12 +187,14 @@ class RunRepository:
                     existing["knowledge_base_id"],
                     existing["retrieval_mode"],
                     existing.get("capture_trace", False),
+                    existing.get("evaluation_options"),
                     json.loads(existing["file_ids"]) if existing.get("file_ids") else None,
                 ) != (
                     body.message,
                     body.knowledge_base_id,
                     body.retrieval_mode,
                     body.capture_trace,
+                    body.evaluation_options.model_dump() if body.evaluation_options else None,
                     body.file_ids,
                 ):
                     raise ChatError("idempotency_conflict", "幂等键已用于其他消息。", 409)
@@ -214,6 +218,8 @@ class RunRepository:
             conversation = await cursor.fetchone()
             if conversation is None:
                 raise ChatError("conversation_not_found", "会话不存在。", 404)
+            if body.evaluation_options is not None and conversation["purpose"] != "evaluation":
+                raise ChatError("evaluation_options_forbidden", "实验参数只能用于评测会话。", 422)
             run_id = str(uuid4())
             cursor = await self.connection.execute(
                 "UPDATE conversations SET status='running', active_run_id=%s, request_id=%s "
@@ -226,8 +232,8 @@ class RunRepository:
             await self.connection.execute(
                 "INSERT INTO runs (run_id, conversation_id, request_id, idempotency_key, "
                 "message, base_run_id, graph_version, status, created_at, updated_at, "
-                "knowledge_base_id, retrieval_mode, file_ids, capture_trace) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, 'queued', %s, %s, %s, %s, %s, %s)",
+                "knowledge_base_id, retrieval_mode, file_ids, capture_trace, evaluation_options) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s)",
                 (
                     run_id,
                     conversation_id,
@@ -242,6 +248,9 @@ class RunRepository:
                     body.retrieval_mode,
                     json.dumps(body.file_ids) if body.file_ids is not None else None,
                     body.capture_trace,
+                    Jsonb(body.evaluation_options.model_dump())
+                    if body.evaluation_options
+                    else None,
                 ),
             )
             row = await self._row(run_id)

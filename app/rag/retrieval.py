@@ -100,9 +100,9 @@ class RetrievalService:
         self.metrics = metrics or Metrics()
 
     @measured("retrieval")
-    async def search(self, kb_id, body, *, capture_trace=False):
+    async def search(self, kb_id, body, *, capture_trace=False, rerank=None):
         try:
-            result = await self._search(kb_id, body, capture_trace=capture_trace)
+            result = await self._search(kb_id, body, capture_trace=capture_trace, rerank=rerank)
         except Exception:
             self.metrics.increment("retrieval_results", outcome="error")
             raise
@@ -113,7 +113,7 @@ class RetrievalService:
         )
         return result
 
-    async def _search(self, kb_id, body, *, capture_trace=False):
+    async def _search(self, kb_id, body, *, capture_trace=False, rerank=None):
         """两路独立执行；可选步骤失败降级，全部启用的召回路径失败时报告错误。"""
         await require_knowledge_base(self.vectors.database, kb_id)
         queries = unique_queries([body.query, *body.queries])
@@ -184,7 +184,16 @@ class RetrievalService:
         self.metrics.observe("fusion", (time.perf_counter() - fusion_started))
         if capture_trace:
             diagnostics["trace"] = {"before_rerank": [s.model_dump() for s in candidates]}
-        candidates = await self._rerank(body.rerank_query or body.query, candidates, diagnostics)
+        if rerank is True and (self.reranker is None or self.settings.retrieval_rerank_weight == 0):
+            raise ChatError(
+                "rerank_not_configured", "开启重排实验需要已配置且权重大于零的重排服务。", 422
+            )
+        if rerank is False:
+            diagnostics["rerank_skipped"] = "evaluation_disabled"
+        else:
+            candidates = await self._rerank(
+                body.rerank_query or body.query, candidates, diagnostics
+            )
         if capture_trace:
             diagnostics["trace"]["after_rerank"] = [s.model_dump() for s in candidates]
         # 向量门槛独立于重排，不能因接入重排而无提示失效。

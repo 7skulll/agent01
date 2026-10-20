@@ -1562,12 +1562,199 @@
       }
     },
     "/api/v1/evaluations": {
+      "post": {
+        "tags": [
+          "evaluations"
+        ],
+        "summary": "Create Evaluation",
+        "operationId": "create_evaluation_api_v1_evaluations_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      },
       "get": {
         "tags": [
           "evaluations"
         ],
         "summary": "List Evaluations",
         "operationId": "list_evaluations_api_v1_evaluations_get",
+        "parameters": [
+          {
+            "name": "knowledge_base_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Knowledge Base Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/evaluations/history": {
+      "get": {
+        "tags": [
+          "evaluations"
+        ],
+        "summary": "Evaluation History",
+        "operationId": "evaluation_history_api_v1_evaluations_history_get",
+        "parameters": [
+          {
+            "name": "knowledge_base_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Knowledge Base Id"
+            }
+          },
+          {
+            "name": "archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Archived"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/evaluations/capabilities": {
+      "get": {
+        "tags": [
+          "evaluations"
+        ],
+        "summary": "Evaluation Capabilities",
+        "operationId": "evaluation_capabilities_api_v1_evaluations_capabilities_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -1598,25 +1785,27 @@
             }
           }
         }
-      },
+      }
+    },
+    "/api/v1/evaluations/case-sets": {
       "post": {
         "tags": [
           "evaluations"
         ],
-        "summary": "Create Evaluation",
-        "operationId": "create_evaluation_api_v1_evaluations_post",
+        "summary": "Save Case Set",
+        "operationId": "save_case_set_api_v1_evaluations_case_sets_post",
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/EvalRequest"
+                "$ref": "#/components/schemas/CaseSetRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
-          "202": {
+          "201": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -1625,24 +1814,234 @@
             }
           },
           "422": {
-            "description": "Unprocessable Content",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "evaluations"
+        ],
+        "summary": "List Case Sets",
+        "operationId": "list_case_sets_api_v1_evaluations_case_sets_get",
+        "parameters": [
+          {
+            "name": "knowledge_base_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Knowledge Base Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
-          "503": {
-            "description": "Service Unavailable",
+          "422": {
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/evaluations/case-sets/{case_set_id}": {
+      "get": {
+        "tags": [
+          "evaluations"
+        ],
+        "summary": "Get Case Set",
+        "operationId": "get_case_set_api_v1_evaluations_case_sets__case_set_id__get",
+        "parameters": [
+          {
+            "name": "case_set_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Case Set Id"
             }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/evaluations/corpus": {
+      "get": {
+        "tags": [
+          "evaluations"
+        ],
+        "summary": "Evaluation Corpus",
+        "operationId": "evaluation_corpus_api_v1_evaluations_corpus_get",
+        "parameters": [
+          {
+            "name": "knowledge_base_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Knowledge Base Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/evaluations/compare": {
+      "get": {
+        "tags": [
+          "evaluations"
+        ],
+        "summary": "Compare Evaluations",
+        "operationId": "compare_evaluations_api_v1_evaluations_compare_get",
+        "parameters": [
+          {
+            "name": "left",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Left"
+            }
+          },
+          {
+            "name": "right",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Right"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         }
       }
@@ -1654,6 +2053,72 @@
         ],
         "summary": "Get Evaluation",
         "operationId": "get_evaluation_api_v1_evaluations__evaluation_id__get",
+        "parameters": [
+          {
+            "name": "evaluation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Evaluation Id"
+            }
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tag"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "evaluations"
+        ],
+        "summary": "Delete Evaluation",
+        "operationId": "delete_evaluation_api_v1_evaluations__evaluation_id__delete",
         "parameters": [
           {
             "name": "evaluation_id",
@@ -1869,6 +2334,247 @@
           }
         }
       }
+    },
+    "/api/v1/evaluations/{evaluation_id}/retry-plan": {
+      "get": {
+        "tags": [
+          "evaluations"
+        ],
+        "summary": "Retry Plan",
+        "operationId": "retry_plan_api_v1_evaluations__evaluation_id__retry_plan_get",
+        "parameters": [
+          {
+            "name": "evaluation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Evaluation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/evaluations/{evaluation_id}/retry": {
+      "post": {
+        "tags": [
+          "evaluations"
+        ],
+        "summary": "Retry Evaluation",
+        "operationId": "retry_evaluation_api_v1_evaluations__evaluation_id__retry_post",
+        "parameters": [
+          {
+            "name": "evaluation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Evaluation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/evaluations/{evaluation_id}/archive": {
+      "patch": {
+        "tags": [
+          "evaluations"
+        ],
+        "summary": "Archive Evaluation",
+        "operationId": "archive_evaluation_api_v1_evaluations__evaluation_id__archive_patch",
+        "parameters": [
+          {
+            "name": "evaluation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Evaluation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArchiveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/evaluations/{evaluation_id}/report": {
+      "get": {
+        "tags": [
+          "evaluations"
+        ],
+        "summary": "Evaluation Report",
+        "operationId": "evaluation_report_api_v1_evaluations__evaluation_id__report_get",
+        "parameters": [
+          {
+            "name": "evaluation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Evaluation Id"
+            }
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tag"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1899,6 +2605,86 @@
           "source_ids"
         ],
         "title": "AnswerSegment"
+      },
+      "ArchiveRequest": {
+        "properties": {
+          "archived": {
+            "type": "boolean",
+            "title": "Archived"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "archived"
+        ],
+        "title": "ArchiveRequest"
+      },
+      "CaseSetRequest": {
+        "properties": {
+          "knowledge_base_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Knowledge Base Id"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "tags": {
+            "items": {
+              "type": "string",
+              "maxLength": 80,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 10,
+            "title": "Tags"
+          },
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/EvalCase"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Cases"
+          },
+          "split": {
+            "type": "string",
+            "enum": [
+              "development",
+              "acceptance"
+            ],
+            "title": "Split",
+            "default": "development"
+          },
+          "review_status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "verified"
+            ],
+            "title": "Review Status",
+            "default": "draft"
+          },
+          "frozen": {
+            "type": "boolean",
+            "title": "Frozen",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "knowledge_base_id",
+          "name",
+          "cases"
+        ],
+        "title": "CaseSetRequest"
       },
       "Conversation": {
         "properties": {
@@ -2069,6 +2855,16 @@
             "type": "boolean",
             "title": "Capture Trace",
             "default": false
+          },
+          "evaluation_options": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvaluationOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "retrieval_mode": {
             "type": "string",
@@ -2524,6 +3320,43 @@
             "maxLength": 2000,
             "title": "Required Facts",
             "default": ""
+          },
+          "judgment_scope": {
+            "type": "string",
+            "enum": [
+              "full",
+              "partial"
+            ],
+            "title": "Judgment Scope",
+            "default": "full"
+          },
+          "negative_file_ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 128,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Negative File Ids"
+          },
+          "tags": {
+            "items": {
+              "type": "string",
+              "maxLength": 80,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 10,
+            "title": "Tags"
+          },
+          "evidence_groups": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceGroup"
+            },
+            "type": "array",
+            "maxItems": 10,
+            "title": "Evidence Groups"
           }
         },
         "additionalProperties": false,
@@ -2597,6 +3430,38 @@
             "maxItems": 20,
             "minItems": 1,
             "title": "Cases"
+          },
+          "case_set_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Set Id"
+          },
+          "options": {
+            "$ref": "#/components/schemas/EvaluationOptions"
+          },
+          "retry_of": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry Of"
+          },
+          "retry_unknown_confirmed": {
+            "type": "boolean",
+            "title": "Retry Unknown Confirmed",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -2607,6 +3472,103 @@
           "cases"
         ],
         "title": "EvalRequest"
+      },
+      "EvaluationOptions": {
+        "properties": {
+          "rerank": {
+            "type": "string",
+            "enum": [
+              "inherit",
+              "on",
+              "off"
+            ],
+            "title": "Rerank",
+            "default": "inherit"
+          },
+          "context_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 8192.0,
+                "minimum": 256.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Tokens"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "EvaluationOptions"
+      },
+      "EvidenceAnchor": {
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "File Id"
+          },
+          "content_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Content Hash"
+          },
+          "quote": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 4,
+            "title": "Quote"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "file_id",
+          "content_hash",
+          "quote"
+        ],
+        "title": "EvidenceAnchor"
+      },
+      "EvidenceGroup": {
+        "properties": {
+          "fact": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Fact"
+          },
+          "alternatives": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceAnchor"
+            },
+            "type": "array",
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Alternatives"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "fact",
+          "alternatives"
+        ],
+        "title": "EvidenceGroup"
       },
       "FileDeleteResult": {
         "properties": {
@@ -3075,6 +4037,26 @@
         ],
         "title": "ModelsInfo"
       },
+      "RetryRequest": {
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Idempotency Key"
+          },
+          "confirm_unknown_calls": {
+            "type": "boolean",
+            "title": "Confirm Unknown Calls",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "idempotency_key"
+        ],
+        "title": "RetryRequest"
+      },
       "Review": {
         "properties": {
           "verdict": {
@@ -3093,6 +4075,78 @@
             "maxLength": 2000,
             "title": "Notes",
             "default": ""
+          },
+          "fact_coverage": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "full",
+              "partial",
+              "none"
+            ],
+            "title": "Fact Coverage",
+            "default": "pending"
+          },
+          "unsupported_claims": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "yes",
+              "no"
+            ],
+            "title": "Unsupported Claims",
+            "default": "pending"
+          },
+          "conditions": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "pass",
+              "fail",
+              "na"
+            ],
+            "title": "Conditions",
+            "default": "pending"
+          },
+          "citation_support": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "full",
+              "partial",
+              "none",
+              "na"
+            ],
+            "title": "Citation Support",
+            "default": "pending"
+          },
+          "refusal": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "correct",
+              "incorrect",
+              "na"
+            ],
+            "title": "Refusal",
+            "default": "pending"
+          },
+          "causes": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "annotation_gap",
+                "parsing",
+                "retrieval",
+                "rerank",
+                "assembly",
+                "generation",
+                "unknown"
+              ]
+            },
+            "type": "array",
+            "maxItems": 7,
+            "title": "Causes"
           }
         },
         "additionalProperties": false,
@@ -3130,6 +4184,16 @@
             "type": "boolean",
             "title": "Capture Trace",
             "default": false
+          },
+          "evaluation_options": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvaluationOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "retrieval_mode": {
             "type": "string",
@@ -3212,6 +4276,16 @@
             "type": "boolean",
             "title": "Capture Trace",
             "default": false
+          },
+          "evaluation_options": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvaluationOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "retrieval_mode": {
             "type": "string",

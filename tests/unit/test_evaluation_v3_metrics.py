@@ -1,0 +1,101 @@
+import pytest
+from pydantic import ValidationError
+from test_evaluation_v2 import experiment
+
+from app.evaluation_comparison import compare
+from app.evaluation_models import CaseSetRequest
+from app.evaluation_quality import markdown_report, quality_summary
+from app.evaluation_usage import actual_tokens
+from app.evaluations import EvaluationService
+from app.schemas import EvaluationOptions
+
+
+def test_quality_scores_never_make_pending_or_na_a_pass_and_reuse_has_no_new_usage():
+    def result(review, **kwargs):
+        return {"status": "completed", "run": {"model_calls": 1}, "review": review, **kwargs}
+
+    rows = [
+        result(
+            {"verdict": "pass", "fact_coverage": "full", "citation_support": "full"},
+            token_usage=[{"actual": {"input_tokens": 10, "output_tokens": 2}}],
+        ),
+        result({"verdict": "pending", "fact_coverage": "pending", "citation_support": "na"}),
+        result(
+            {"verdict": "fail", "fact_coverage": "none", "citation_support": "none"},
+            reused_from="original",
+        ),
+    ]
+    quality = quality_summary(rows)
+    assert quality["pass_rate"] == 0.5
+    assert quality["dimensions"]["citation_support"]["judged"] == 2
+    assert quality["dimensions"]["citation_support"]["na"] == 1
+    assert quality["usage"] == {
+        "known_tokens": 12,
+        "known_queries": 1,
+        "unknown_queries": 1,
+        "new_model_calls": 2,
+    }
+    assert actual_tokens({"run": {"model_calls": 0}}) == 0
+    assert actual_tokens({"token_usage": [{"actual": {"input_tokens": 10}}]}) is None
+
+
+def test_frozen_cases_require_full_verified_evidence():
+    body = {
+        "knowledge_base_id": "default",
+        "name": "测试",
+        "frozen": True,
+        "review_status": "verified",
+        "cases": [{"query": "奖金", "expected": "unanswerable", "judgment_scope": "partial"}],
+    }
+    with pytest.raises(ValidationError):
+        CaseSetRequest(**body)
+    body["cases"][0]["judgment_scope"] = "full"
+    assert CaseSetRequest(**body).frozen
+    for options in ({"context_tokens": 32}, {"rerank": "invalid"}):
+        with pytest.raises(ValidationError):
+            EvaluationOptions(**options)
+
+
+def test_retry_plan_keeps_completed_and_marks_unknown_rag_attempts():
+    row = {
+        "request": {"kind": "rag", "cases": [{}, {}, {}, {}]},
+        "results": [
+            {"status": "completed"},
+            {"status": "failed", "run": {"model_calls": 1}},
+            {"status": "cancelled", "run": {"model_calls": 0}},
+        ],
+    }
+    assert EvaluationService.retry_plan(row) == {
+        "retry_indices": [1, 2, 3],
+        "unknown_indices": [1],
+        "reuse_count": 1,
+    }
+
+
+def test_reused_cases_keep_ir_delta_but_never_claim_new_runtime_or_token_delta():
+    a, b = experiment(), experiment()
+    b["results"][0]["reused_from"] = "parent"
+    row = compare(a, b)["rows"][0]
+    assert row["outcome"] == "tie"
+    assert row["elapsed_ms_delta"] is None
+    assert row["tokens_delta"] is None
+
+
+def test_report_escapes_user_markdown_and_explains_denominators():
+    row = experiment()
+    row["results"][0]["case"]["query"] = "<script>|问题\n下一行"
+    row["results"][0]["review"] = {"verdict": "pending", "notes": "待审核"}
+    row.update(
+        quality=quality_summary(row["results"]),
+        summary={"metrics": {"recall": 1}, "metric_queries": 1},
+    )
+    row["snapshot"]["fingerprint"] = "fixed"
+    text = markdown_report(row)
+    assert "&lt;script&gt;\\|问题 下一行" in text
+    assert "未评分" in text
+    assert "失败计零" in text
+
+
+def test_unattempted_pending_rows_do_not_require_unknown_call_confirmation():
+    row = {"request": {"kind": "rag", "cases": [{}]}, "results": [{"status": "pending"}]}
+    assert EvaluationService.retry_plan(row)["unknown_indices"] == []

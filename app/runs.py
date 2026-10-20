@@ -130,7 +130,7 @@ class RunService:
         return None
 
     @complete_on_cancel
-    async def delete_conversation(self, thread_id):
+    async def delete_conversation(self, thread_id, *, cleanup=True):
         async with self.control_lock:
             async with self.repository.database.read():
                 cursor = await self.repository.connection.execute(
@@ -140,7 +140,11 @@ class RunService:
             if any(self.tasks.get(i) is not None and not self.tasks[i].done() for i in ids):
                 raise ChatError("conversation_busy", "会话任务正在收尾，请稍后重试。", 409, True)
             await self.runtime.repository.delete(thread_id)
-        pending = await self.runtime.repository.cleanup_checkpoints(self.runtime.checkpointer)
+        pending = (
+            await self.runtime.repository.cleanup_checkpoints(self.runtime.checkpointer)
+            if cleanup
+            else 0
+        )
         return {"thread_id": thread_id, "deleted": True, "cleanup_pending": pending}
 
     async def settle(self, run_id, status, **kwargs):
@@ -179,6 +183,7 @@ class RunService:
                     "knowledge_base_id": row["knowledge_base_id"],
                     "retrieval_mode": row["retrieval_mode"],
                     "capture_trace": row.get("capture_trace", False),
+                    "evaluation_options": row.get("evaluation_options") or {},
                     "file_ids": json.loads(row["file_ids"]) if row.get("file_ids") else None,
                     "base_message_count": len(history),
                     "messages": [*history, HumanMessage(content=row["message"])],

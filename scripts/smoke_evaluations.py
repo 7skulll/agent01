@@ -1,4 +1,4 @@
-"""Two-case real-model smoke for same-run evaluation; isolated test schema, synthetic text only."""
+"""Two synthetic real-model cases: versioned labels, evidence, isolated test schema."""
 
 import asyncio
 import json
@@ -52,9 +52,45 @@ async def main():
                     )
                     response.raise_for_status()
                     file_id = response.json()["file_id"]
+                    content_hash = response.json()["content_hash"]
                     response = await client.post("/api/v1/knowledge-bases/default/index")
                     response.raise_for_status()
                     await app.state.index_service.wait()
+                    cases = [
+                        {
+                            "query": "员工每年有多少天带薪年假，谁审批？",
+                            "expected": "answerable",
+                            "relevant_file_ids": [file_id],
+                            "evidence_groups": [
+                                {
+                                    "fact": fact,
+                                    "alternatives": [
+                                        {
+                                            "file_id": file_id,
+                                            "content_hash": content_hash,
+                                            "quote": quote,
+                                        }
+                                    ],
+                                }
+                                for fact, quote in [
+                                    ("年假天数", "每年享有十天带薪年假"),
+                                    ("审批要求", "申请需要直属主管审批"),
+                                ]
+                            ],
+                        },
+                        {"query": "员工生日礼金的精确金额是多少？", "expected": "unanswerable"},
+                    ]
+                    saved = await client.post(
+                        "/api/v1/evaluations/case-sets",
+                        json={
+                            "knowledge_base_id": "default",
+                            "name": "合成制度 smoke",
+                            "tags": ["synthetic"],
+                            "cases": cases,
+                        },
+                    )
+                    saved.raise_for_status()
+                    case_set = saved.json()
                     response = await client.post(
                         "/api/v1/evaluations",
                         json={
@@ -63,17 +99,8 @@ async def main():
                             "kind": "rag",
                             "mode": "keyword",
                             "k": 3,
-                            "cases": [
-                                {
-                                    "query": "员工每年有多少天带薪年假，谁审批？",
-                                    "expected": "answerable",
-                                    "relevant_file_ids": [file_id],
-                                },
-                                {
-                                    "query": "员工生日礼金的精确金额是多少？",
-                                    "expected": "unanswerable",
-                                },
-                            ],
+                            "cases": case_set["cases"],
+                            "case_set_id": case_set["case_set_id"],
                         },
                     )
                     response.raise_for_status()
@@ -94,6 +121,10 @@ async def main():
                     assert result["summary"]["metrics"]["recall"] == 1
                     assert result["summary"]["metrics"]["precision"] == 1 / 3
                     assert all("trace" in r["diagnostics"] for r in result["results"])
+                    assert result["snapshot"]["case_set"]["version"] == 1
+                    assert result["results"][0]["evidence"]["context_complete"] is True
+                    report["evidence_coverage"] = result["results"][0]["evidence"]["coverage"]
+                    report["checks"].extend(["versioned_case_set", "two_fact_context_evidence"])
                     report.update(
                         summary=result["summary"],
                         results=[
@@ -129,7 +160,7 @@ async def main():
                     assert response.json()["summary"] == report["summary"]
                     report["checks"].append("restart_persistence")
     report["temporary_schema_cleaned"] = True
-    output = ROOT / "evals/results/evaluation-v1-smoke.json"
+    output = ROOT / "evals/results/evaluation-v2-smoke.json"
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps(report, ensure_ascii=False, indent=2))
 

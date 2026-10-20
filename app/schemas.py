@@ -57,12 +57,19 @@ class ConversationHistory(BaseModel):
 RunStatus = Literal["queued", "running", "paused", "recovering", "completed", "failed", "cancelled"]
 
 
+class EvaluationOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    rerank: Literal["inherit", "on", "off"] = "inherit"
+    context_tokens: int | None = Field(default=None, ge=256, le=8192)
+
+
 class RunRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     message: str = Field(min_length=1, max_length=4000)
     idempotency_key: str = Field(min_length=1, max_length=128)
     knowledge_base_id: str | None = Field(default=None, min_length=1, max_length=128)
     capture_trace: bool = False
+    evaluation_options: EvaluationOptions | None = None
     retrieval_mode: Literal["hybrid", "keyword", "vector"] = "hybrid"
     file_ids: list[Annotated[str, Field(min_length=1, max_length=128)]] | None = Field(
         default=None, max_length=100
@@ -87,6 +94,7 @@ class RunResponse(BaseModel):
     status: RunStatus
     knowledge_base_id: str | None = None
     capture_trace: bool = False
+    evaluation_options: EvaluationOptions | None = None
     retrieval_mode: Literal["hybrid", "keyword", "vector"] = "hybrid"
     file_ids: list[str] | None = None
     graph_version: str

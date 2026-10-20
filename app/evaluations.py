@@ -5,58 +5,24 @@ import hashlib
 import json
 import logging
 import time
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Literal
-from uuid import UUID, uuid4
+from uuid import uuid4
 
-from fastapi import APIRouter, Request
-from fastapi.responses import Response
 from psycopg.types.json import Jsonb
-from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.errors import ChatError
-from app.evaluation_metrics import retrieval_metrics, summarize
+from app.evaluation_evidence import evidence_report
+from app.evaluation_metrics import case_metrics, judgment_coverage, summarize
+from app.evaluation_models import EvalRequest, Review
+from app.evaluation_quality import quality_summary
 from app.knowledge_bases import require_knowledge_base
 from app.rag.retrieval import SearchRequest
 from app.runs import complete_on_cancel
 from app.schemas import RunRequest
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/v1/evaluations", tags=["evaluations"])
-FileID = Annotated[str, Field(min_length=1, max_length=128)]
-
-
-class EvalCase(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    query: str = Field(min_length=1, max_length=4000)
-    expected: Literal["unlabelled", "answerable", "unanswerable"] = "unlabelled"
-    relevant_file_ids: list[FileID] = Field(default_factory=list, max_length=100)
-    required_facts: str = Field(default="", max_length=2000)
-
-    @model_validator(mode="after")
-    def coherent(self):
-        self.relevant_file_ids = sorted(set(self.relevant_file_ids))
-        if (self.expected == "answerable") != bool(self.relevant_file_ids):
-            raise ValueError("有答案标注必须选择相关文件；未标注和应拒答案例不填写相关文件。")
-        return self
-
-
-class EvalRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    idempotency_key: UUID
-    knowledge_base_id: str = Field(min_length=1, max_length=128)
-    kind: Literal["retrieval", "rag"] = "retrieval"
-    mode: Literal["keyword", "vector", "hybrid"] = "hybrid"
-    k: int = Field(default=5, ge=1, le=20)
-    file_ids: list[FileID] | None = Field(default=None, max_length=100)
-    cases: list[EvalCase] = Field(min_length=1, max_length=20)
-
-
-class Review(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    verdict: Literal["pending", "pass", "partial", "fail"] = "pending"
-    notes: str = Field(default="", max_length=2000)
 
 
 def timestamp():
@@ -76,7 +42,7 @@ class EvaluationService:
         self.tasks = {}
         self.closing = False
 
-    async def row(self, evaluation_id):
+    async def stored(self, evaluation_id):
         async with self.database.read():
             cur = await self.database.connection.execute(
                 "SELECT * FROM evaluations WHERE evaluation_id=%s", (evaluation_id,)
@@ -84,27 +50,47 @@ class EvaluationService:
             row = await cur.fetchone()
         if row is None:
             raise ChatError("evaluation_not_found", "评测记录不存在。", 404)
-        row["summary"] = summarize(row["results"], row["request"]["k"])
+        return row
+
+    async def row(self, evaluation_id, tag=None):
+        row = await self.stored(evaluation_id)
+        selected = [r for r in row["results"] if not tag or tag in r["case"].get("tags", [])]
+        row["filter_tag"] = tag
+        row["quality"] = quality_summary(selected)
+        row["summary"] = summarize(selected, row["request"]["k"], kind=row["request"]["kind"])
         row["summary"]["curves"] = []
         for k in (1, 3, 5, 10, 20):
             scored = [
                 {
                     **result,
-                    "metrics": retrieval_metrics(
-                        result.get("sources", []), result["case"]["relevant_file_ids"], k
-                    )
+                    "metrics": case_metrics(result.get("sources", []), result["case"], k)
                     if result["status"] == "completed"
                     else None,
                 }
-                for result in row["results"]
+                for result in selected
             ]
             row["summary"]["curves"].append({"k": k, **summarize(scored, k)["metrics"]})
+        return row
+
+    async def control(self, evaluation_id):
+        """Worker polling needs no candidate snapshots or derived metrics."""
+        async with self.database.read():
+            cur = await self.database.connection.execute(
+                "SELECT status,stop_requested,active_run_id FROM evaluations "
+                "WHERE evaluation_id=%s",
+                (evaluation_id,),
+            )
+            row = await cur.fetchone()
+        if row is None:
+            raise ChatError("evaluation_not_found", "评测记录不存在。", 404)
         return row
 
     async def update(self, evaluation_id, **fields):
         fields["updated_at"] = timestamp()
         values = [
-            Jsonb(v) if key in ("results", "error") and v is not None else v
+            Jsonb(v)
+            if key in ("results", "error", "owned_conversation_ids") and v is not None
+            else v
             for key, v in fields.items()
         ]
         async with self.database.transaction():
@@ -115,7 +101,7 @@ class EvaluationService:
                 (*values, evaluation_id),
             )
 
-    async def snapshot(self, body):
+    async def corpus(self, body):
         await require_knowledge_base(self.database, body.knowledge_base_id)
         async with self.database.read():
             cur = await self.database.connection.execute(
@@ -130,9 +116,22 @@ class EvaluationService:
                 raise ChatError("invalid_file_scope", "检索范围包含已删除或其他库的文件。", 422)
             allowed &= set(body.file_ids)
         for case in body.cases:
-            if not set(case.relevant_file_ids) <= allowed:
+            if not set(case.relevant_file_ids + case.negative_file_ids) <= allowed:
                 raise ChatError("invalid_qrels", "标注相关文件必须位于本次检索范围内。", 422)
+        return files
+
+    async def snapshot(self, body):
+        files = await self.corpus(body)
         settings = self.app.state.runtime.settings
+        if body.options.context_tokens is not None and body.kind != "rag":
+            raise ChatError("invalid_experiment_options", "上下文预算仅用于完整 RAG。", 422)
+        if body.options.rerank == "on" and (
+            self.app.state.retrieval_service.reranker is None
+            or settings.retrieval_rerank_weight == 0
+        ):
+            raise ChatError(
+                "rerank_not_configured", "请先配置权重大于零的重排服务，或选择跟随配置/关闭。", 422
+            )
         config = {
             key: value
             for key, value in settings.model_dump(mode="json").items()
@@ -152,9 +151,23 @@ class EvaluationService:
             "vector_version": self.app.state.vector_service.version,
             "lexical_version": self.app.state.lexical_index.version,
             "code_sha256": code.hexdigest(),
+            "experiment_options": body.options.model_dump(),
         }
         snapshot["fingerprint"] = digest(snapshot)
         return snapshot
+
+    @staticmethod
+    def retry_results(body, seeds):
+        return [
+            deepcopy(seeds.get(i))
+            or {
+                "case": case.model_dump(),
+                "status": "pending",
+                "sources": [],
+                "review": Review().model_dump(),
+            }
+            for i, case in enumerate(body.cases)
+        ]
 
     @complete_on_cancel
     async def create(self, body):
@@ -167,7 +180,7 @@ class EvaluationService:
                 old = await cur.fetchone()
             request = body.model_dump(mode="json")
             if old:
-                if old["request"] != request:
+                if EvalRequest.model_validate(old["request"]).model_dump(mode="json") != request:
                     raise ChatError("idempotency_conflict", "此幂等键已用于其他评测配置。", 409)
                 return await self.row(old["evaluation_id"])
             if self.closing or any(not task.done() for task in self.tasks.values()):
@@ -177,13 +190,81 @@ class EvaluationService:
             if body.kind == "rag" and not self.app.state.runtime.ready:
                 raise ChatError("model_not_configured", "请先配置回答模型，或选择仅检索。", 503)
             snapshot = await self.snapshot(body)
+            if body.case_set_id:
+                saved = await self.case_set(str(body.case_set_id))
+                if saved["kb_id"] != body.knowledge_base_id or saved["cases"] != request["cases"]:
+                    raise ChatError(
+                        "case_set_mismatch", "案例内容与所选版本不一致，请另存版本或重新载入。", 409
+                    )
+                corpus = [
+                    {"file_id": f["file_id"], "content_hash": f["content_hash"]}
+                    for f in snapshot["files"]
+                ]
+                if corpus != saved["corpus"]:
+                    raise ChatError(
+                        "case_set_stale",
+                        "案例集绑定的资料已变化，请重新核对标注并保存新版本。",
+                        409,
+                    )
+                snapshot["case_set"] = {
+                    key: saved[key]
+                    for key in (
+                        "case_set_id",
+                        "name",
+                        "version",
+                        "tags",
+                        "fingerprint",
+                        "split",
+                        "review_status",
+                        "frozen",
+                    )
+                }
+            seeds = {}
+            if body.retry_of:
+                parent = await self.stored(str(body.retry_of))
+                if parent["status"] == "running":
+                    raise ChatError("evaluation_busy", "请先停止原评测。", 409)
+                original = EvalRequest.model_validate(parent["request"])
+                compare_fields = (
+                    "knowledge_base_id",
+                    "kind",
+                    "mode",
+                    "k",
+                    "file_ids",
+                    "cases",
+                    "case_set_id",
+                    "options",
+                )
+                if any(
+                    getattr(original, field) != getattr(body, field) for field in compare_fields
+                ):
+                    raise ChatError("retry_inputs_changed", "重试必须沿用原案例与配置。", 409)
+                if parent["snapshot"]["fingerprint"] != snapshot["fingerprint"]:
+                    raise ChatError(
+                        "retry_inputs_changed", "资料、配置或代码已变化，请创建独立实验。", 409
+                    )
+                plan = self.retry_plan(parent)
+                if not plan["retry_indices"]:
+                    raise ChatError("nothing_to_retry", "没有失败或未完成题。", 409)
+                if plan["unknown_indices"] and not body.retry_unknown_confirmed:
+                    raise ChatError(
+                        "unknown_calls_require_confirmation",
+                        "部分调用结果未知，重试可能再次计费，请明确确认。",
+                        409,
+                    )
+                seeds = {
+                    i: {**deepcopy(r), "reused_from": parent["evaluation_id"]}
+                    for i, r in enumerate(parent["results"])
+                    if r["status"] == "completed"
+                }
+            initial_results = self.retry_results(body, seeds) if body.retry_of else []
             evaluation_id = str(uuid4())
             now = timestamp()
             async with self.database.transaction():
                 await self.database.connection.execute(
                     "INSERT INTO evaluations(evaluation_id,idempotency_key,created_at,updated_at,"
-                    "status,request,snapshot) "
-                    "VALUES(%s,%s,%s,%s,'running',%s,%s)",
+                    "status,request,snapshot,results) "
+                    "VALUES(%s,%s,%s,%s,'running',%s,%s,%s)",
                     (
                         evaluation_id,
                         str(body.idempotency_key),
@@ -191,9 +272,10 @@ class EvaluationService:
                         now,
                         Jsonb(request),
                         Jsonb(snapshot),
+                        Jsonb(initial_results),
                     ),
                 )
-            task = asyncio.create_task(self.execute(evaluation_id, body, snapshot))
+            task = asyncio.create_task(self.execute(evaluation_id, body, snapshot, seeds))
             self.tasks[evaluation_id] = task
             task.add_done_callback(lambda done: self.done(evaluation_id, done))
             return await self.row(evaluation_id)
@@ -205,7 +287,9 @@ class EvaluationService:
 
     @complete_on_cancel
     async def start_run(self, evaluation_id, body, case):
-        conversation = await self.app.state.runtime.repository.create(purpose="evaluation")
+        conversation = await self.app.state.runtime.repository.create(
+            purpose="evaluation", owner_evaluation_id=evaluation_id
+        )
         run = await self.app.state.run_service.create(
             str(conversation.thread_id),
             RunRequest(
@@ -215,6 +299,7 @@ class EvaluationService:
                 retrieval_mode=body.mode,
                 file_ids=body.file_ids,
                 capture_trace=True,
+                evaluation_options=body.options,
             ),
             str(uuid4()),
         )
@@ -227,7 +312,7 @@ class EvaluationService:
         return run_id
 
     async def cancel_active(self, evaluation_id, active_run=None):
-        run_id = active_run or (await self.row(evaluation_id))["active_run_id"]
+        run_id = active_run or (await self.control(evaluation_id))["active_run_id"]
         if run_id:
             try:
                 await self.app.state.run_service.cancel(run_id)
@@ -236,12 +321,13 @@ class EvaluationService:
                     raise
         await self.update(evaluation_id, active_run_id=None)
 
-    async def execute(self, evaluation_id, body, snapshot):
-        results = []
+    async def execute(self, evaluation_id, body, snapshot, seeds=None):
+        preallocated = body.retry_of is not None
+        results = self.retry_results(body, seeds or {}) if preallocated else []
         active_run = None
         try:
-            for case in body.cases:
-                row = await self.row(evaluation_id)
+            for index, case in enumerate(body.cases):
+                row = await self.control(evaluation_id)
                 if row["stop_requested"]:
                     break
                 current = await self.snapshot(body)
@@ -249,13 +335,19 @@ class EvaluationService:
                     raise ChatError(
                         "evaluation_inputs_changed", "资料或模型配置已变化，请创建新评测。", 409
                     )
+                if seeds and index in seeds:
+                    await self.update(evaluation_id, results=results)
+                    continue
                 result = {
                     "case": case.model_dump(),
                     "status": "running",
                     "sources": [],
                     "review": Review().model_dump(),
                 }
-                results.append(result)
+                if preallocated:
+                    results[index] = result
+                else:
+                    results.append(result)
                 await self.update(evaluation_id, results=results)
                 started = time.perf_counter()
                 try:
@@ -266,6 +358,11 @@ class EvaluationService:
                                 query=case.query, mode=body.mode, top_k=20, file_ids=body.file_ids
                             ),
                             capture_trace=True,
+                            **(
+                                {"rerank": body.options.rerank == "on"}
+                                if body.options.rerank != "inherit"
+                                else {}
+                            ),
                         )
                         result.update(
                             sources=[s.model_dump() for s in found.sources],
@@ -274,8 +371,10 @@ class EvaluationService:
                         )
                     else:
                         active_run = await self.start_run(evaluation_id, body, case)
+                        result["run_id"] = active_run
+                        await self.update(evaluation_id, results=results)
                         while True:
-                            if (await self.row(evaluation_id))["stop_requested"]:
+                            if (await self.control(evaluation_id))["stop_requested"]:
                                 await self.app.state.run_service.cancel(active_run)
                             run_row = await self.app.state.run_service.inspect(active_run)
                             if run_row["status"] in ("completed", "failed", "cancelled"):
@@ -328,10 +427,24 @@ class EvaluationService:
                             409,
                         )
                     result["metrics"] = (
-                        retrieval_metrics(result["sources"], case.relevant_file_ids, body.k)
+                        case_metrics(result["sources"], case.model_dump(), body.k)
                         if result["status"] == "completed"
                         else None
                     )
+                    result["judgments"] = judgment_coverage(
+                        result["sources"], case.model_dump(), body.k
+                    )
+                    if case.evidence_groups:
+                        async with self.database.read():
+                            cur = await self.database.connection.execute(
+                                "SELECT file_id,chunk_id,content,page FROM chunks "
+                                "WHERE kb_id=%s AND file_id=ANY(%s)",
+                                (body.knowledge_base_id, case.relevant_file_ids),
+                            )
+                            chunks = await cur.fetchall()
+                        result["evidence"] = evidence_report(
+                            case.model_dump()["evidence_groups"], snapshot["files"], chunks, result
+                        )
                 except ChatError as exc:
                     result.update(
                         status="failed", error={"code": exc.code, "message": str(exc)}, metrics=None
@@ -351,14 +464,15 @@ class EvaluationService:
                     active_run = None
                 result["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 2)
                 await self.update(evaluation_id, results=results)
-            stopped = (await self.row(evaluation_id))["stop_requested"]
+            stopped = (await self.control(evaluation_id))["stop_requested"]
             await self.update(
                 evaluation_id, status="stopped" if stopped else "completed", active_run_id=None
             )
         except asyncio.CancelledError:
             await self.cancel_active(evaluation_id, active_run)
-            if results and results[-1]["status"] == "running":
-                results[-1]["status"] = "cancelled"
+            for result in results:
+                if result["status"] == "running":
+                    result["status"] = "cancelled"
             await self.update(evaluation_id, status="stopped", results=results, active_run_id=None)
         except Exception as exc:
             await self.cancel_active(evaluation_id, active_run)
@@ -366,20 +480,23 @@ class EvaluationService:
                 "code": getattr(exc, "code", "evaluation_failed"),
                 "message": str(exc) if isinstance(exc, ChatError) else "评测执行中断。",
             }
+            for result in results:
+                if result["status"] == "running":
+                    result.update(status="failed", error=error, metrics=None)
             await self.update(
                 evaluation_id, status="failed", results=results, active_run_id=None, error=error
             )
 
     async def stop(self, evaluation_id):
         async with self.lock:
-            row = await self.row(evaluation_id)
+            row = await self.stored(evaluation_id)
             if row["status"] == "running":
                 await self.update(evaluation_id, stop_requested=True)
                 task = self.tasks.get(evaluation_id)
                 if task and not task.done():
                     task.cancel()
                     await asyncio.gather(task, return_exceptions=True)
-                latest = await self.row(evaluation_id)
+                latest = await self.stored(evaluation_id)
                 if latest["status"] == "running":
                     await self.cancel_active(evaluation_id)
                     for result in latest["results"]:
@@ -387,6 +504,158 @@ class EvaluationService:
                             result["status"] = "cancelled"
                     await self.update(evaluation_id, status="stopped", results=latest["results"])
             return await self.row(evaluation_id)
+
+    async def case_set(self, case_set_id):
+        async with self.database.read():
+            cur = await self.database.connection.execute(
+                "SELECT * FROM evaluation_case_sets WHERE case_set_id=%s", (case_set_id,)
+            )
+            saved = await cur.fetchone()
+        if not saved:
+            raise ChatError("case_set_not_found", "案例集版本不存在。", 404)
+        return saved
+
+    async def save_case_set(self, body):
+        async with self.lock:
+            files = await self.corpus(
+                EvalRequest(
+                    idempotency_key=uuid4(),
+                    knowledge_base_id=body.knowledge_base_id,
+                    cases=body.cases,
+                )
+            )
+            cases = [case.model_dump(mode="json") for case in body.cases]
+            if body.frozen:
+                positive_ids = sorted(
+                    {file_id for case in body.cases for file_id in case.relevant_file_ids}
+                )
+                async with self.database.read():
+                    cur = await self.database.connection.execute(
+                        "SELECT file_id,content,page FROM chunks "
+                        "WHERE kb_id=%s AND file_id=ANY(%s)",
+                        (body.knowledge_base_id, positive_ids),
+                    )
+                    chunks = await cur.fetchall()
+                for case in cases:
+                    if (
+                        case["evidence_groups"]
+                        and not evidence_report(case["evidence_groups"], files, chunks, {})["valid"]
+                    ):
+                        raise ChatError(
+                            "invalid_frozen_evidence",
+                            "冻结失败：必要原文已失效或尚未定位，请先索引并核对原文、页码和文件版本。",
+                            422,
+                        )
+            # Full judgments are tied to a corpus: additions require annotation review too.
+            corpus = [{"file_id": f["file_id"], "content_hash": f["content_hash"]} for f in files]
+            fingerprint = digest(
+                {
+                    "cases": cases,
+                    "corpus": corpus,
+                    "split": body.split,
+                    "review_status": body.review_status,
+                    "frozen": body.frozen,
+                }
+            )
+            async with self.database.transaction():
+                cur = await self.database.connection.execute(
+                    "SELECT * FROM evaluation_case_sets WHERE kb_id=%s AND name=%s "
+                    "ORDER BY version DESC LIMIT 1",
+                    (body.knowledge_base_id, body.name),
+                )
+                previous = await cur.fetchone()
+                if (
+                    previous
+                    and previous["fingerprint"] == fingerprint
+                    and previous["tags"] == body.tags
+                ):
+                    return previous
+                case_set_id = str(uuid4())
+                cur = await self.database.connection.execute(
+                    "INSERT INTO evaluation_case_sets(case_set_id,kb_id,name,version,tags,cases,"
+                    "corpus,fingerprint,created_at,split,review_status,frozen) "
+                    "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+                    (
+                        case_set_id,
+                        body.knowledge_base_id,
+                        body.name,
+                        previous["version"] + 1 if previous else 1,
+                        Jsonb(body.tags),
+                        Jsonb(cases),
+                        Jsonb(corpus),
+                        fingerprint,
+                        timestamp(),
+                        body.split,
+                        body.review_status,
+                        body.frozen,
+                    ),
+                )
+                return await cur.fetchone()
+
+    @staticmethod
+    def retry_plan(row):
+        retry, unknown = [], []
+        for i in range(len(row["request"]["cases"])):
+            result = row["results"][i] if i < len(row["results"]) else None
+            if result and result["status"] == "completed":
+                continue
+            retry.append(i)
+            if (
+                result
+                and result["status"] != "pending"
+                and row["request"]["kind"] == "rag"
+                and result.get("run", {}).get("model_calls") != 0
+            ):
+                unknown.append(i)
+        return {
+            "retry_indices": retry,
+            "unknown_indices": unknown,
+            "reuse_count": len(row["request"]["cases"]) - len(retry),
+        }
+
+    async def history(self, kb_id, archived, limit, offset):
+        condition = "(%s::text IS NULL OR request->>'knowledge_base_id'=%s) AND archived=%s"
+        args = (kb_id, kb_id, archived)
+        async with self.database.read():
+            cur = await self.database.connection.execute(
+                "SELECT COUNT(*) AS n FROM evaluations WHERE " + condition, args
+            )
+            total = (await cur.fetchone())["n"]
+            cur = await self.database.connection.execute(
+                "SELECT evaluation_id,status,created_at,archived,"
+                "request->>'knowledge_base_id' AS kb_id,"
+                "request->>'kind' AS kind,request->>'mode' AS mode FROM evaluations WHERE "
+                + condition
+                + " ORDER BY created_at DESC,evaluation_id DESC LIMIT %s OFFSET %s",
+                (*args, limit, offset),
+            )
+            items = await cur.fetchall()
+        return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+    async def manage(self, evaluation_id, archived=None, delete=False):
+        async with self.lock:
+            row = await self.stored(evaluation_id)
+            if row["status"] == "running" or (
+                evaluation_id in self.tasks and not self.tasks[evaluation_id].done()
+            ):
+                raise ChatError("evaluation_busy", "请先停止评测后再管理。", 409)
+            if not delete:
+                await self.update(evaluation_id, archived=archived)
+                return await self.row(evaluation_id)
+            for thread_id in row["owned_conversation_ids"]:
+                try:
+                    await self.app.state.run_service.delete_conversation(thread_id, cleanup=False)
+                except ChatError as exc:
+                    if exc.code != "conversation_not_found":
+                        raise
+            pending = await self.app.state.runtime.repository.cleanup_checkpoints(
+                self.app.state.runtime.checkpointer
+            )
+            async with self.database.transaction():
+                await self.database.connection.execute(
+                    "DELETE FROM evaluations WHERE evaluation_id=%s", (evaluation_id,)
+                )
+            return {"evaluation_id": evaluation_id, "deleted": True, "cleanup_pending": pending}
 
     async def setup(self):
         async with self.database.read():
@@ -414,56 +683,3 @@ class EvaluationService:
         self.closing = True
         for evaluation_id in list(self.tasks):
             await self.stop(evaluation_id)
-
-
-@router.post("", status_code=202)
-async def create_evaluation(body: EvalRequest, request: Request):
-    return await request.app.state.evaluations.create(body)
-
-
-@router.get("")
-async def list_evaluations(request: Request):
-    service = request.app.state.evaluations
-    async with service.database.read():
-        cur = await service.database.connection.execute(
-            "SELECT evaluation_id,status,created_at,request->>'knowledge_base_id' AS kb_id,"
-            "request->>'kind' AS kind FROM evaluations ORDER BY created_at DESC LIMIT 30"
-        )
-        return await cur.fetchall()
-
-
-@router.get("/{evaluation_id}")
-async def get_evaluation(evaluation_id: UUID, request: Request):
-    return await request.app.state.evaluations.row(str(evaluation_id))
-
-
-@router.post("/{evaluation_id}/stop")
-async def stop_evaluation(evaluation_id: UUID, request: Request):
-    return await request.app.state.evaluations.stop(str(evaluation_id))
-
-
-@router.patch("/{evaluation_id}/reviews/{index}")
-async def review_evaluation(evaluation_id: UUID, index: int, body: Review, request: Request):
-    service = request.app.state.evaluations
-    async with service.lock:
-        row = await service.row(str(evaluation_id))
-        if row["status"] == "running":
-            raise ChatError("evaluation_busy", "请在评测结束后保存人工评价。", 409)
-        if not 0 <= index < len(row["results"]):
-            raise ChatError("case_not_found", "案例不存在。", 404)
-        row["results"][index]["review"] = body.model_dump()
-        await service.update(str(evaluation_id), results=row["results"])
-    return await service.row(str(evaluation_id))
-
-
-@router.get("/{evaluation_id}/export")
-async def export_evaluation(evaluation_id: UUID, request: Request):
-    row = await request.app.state.evaluations.row(str(evaluation_id))
-    return Response(
-        json.dumps(row, ensure_ascii=False, indent=2),
-        media_type="application/json",
-        headers={
-            "Content-Disposition": f'attachment; filename="evaluation-{evaluation_id}.json"',
-            "Cache-Control": "no-store",
-        },
-    )

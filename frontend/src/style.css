@@ -2990,3 +2990,95 @@ tr:last-child td {
     padding: 16px;
   }
 }
+
+/* Evaluation V2: evidence and paired experiment diagnostics. */
+.eval-case-sets,
+.eval-anchors {
+  margin: 16px 0;
+}
+.eval-comparison {
+  min-width: 0;
+}
+.eval-comparison select {
+  max-width: 100%;
+}
+.eval-comparison .field {
+  flex: 1;
+  min-width: 150px;
+}
+.eval-deltas {
+  margin: 20px 0;
+}
+.eval-deltas > div {
+  display: grid;
+  grid-template-columns: 64px 1fr 90px;
+  gap: 12px;
+  align-items: center;
+  margin: 10px 0;
+}
+.eval-delta-track {
+  position: relative;
+  background: #edf4ee;
+  height: 12px;
+}
+.eval-delta-track::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  height: 100%;
+  border-left: 1px solid var(--muted);
+}
+.eval-delta-track i {
+  position: absolute;
+  height: 100%;
+}
+.eval-coverage-row {
+  display: grid;
+  grid-template-columns: 95px minmax(60px, 1fr) 65px;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+}
+.eval-coverage-row progress {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.eval-anchors input,
+.eval-anchors select,
+.eval-anchors textarea {
+  max-width: 100%;
+}
+.eval-review fieldset {
+  padding: 12px;
+  border: 1px solid var(--line);
+}
+
+.eval-quality-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(60px, 1fr) 70px;
+  gap: 12px;
+  align-items: center;
+  margin: 16px 0;
+}
+.eval-quality-row small {
+  display: block;
+  color: var(--muted);
+  margin-top: 5px;
+}
+.eval-quality-row progress {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.eval-retry label {
+  display: block;
+  margin: 16px 0;
+}
+@media (max-width: 600px) {
+  .eval-quality-row {
+    grid-template-columns: 1fr 65px;
+  }
+  .eval-quality-row progress {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}

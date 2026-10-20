@@ -421,6 +421,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/evaluations/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Evaluation History */
+        get: operations["evaluation_history_api_v1_evaluations_history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/evaluations/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Evaluation Capabilities */
+        get: operations["evaluation_capabilities_api_v1_evaluations_capabilities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/evaluations/case-sets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Case Sets */
+        get: operations["list_case_sets_api_v1_evaluations_case_sets_get"];
+        put?: never;
+        /** Save Case Set */
+        post: operations["save_case_set_api_v1_evaluations_case_sets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/evaluations/case-sets/{case_set_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Case Set */
+        get: operations["get_case_set_api_v1_evaluations_case_sets__case_set_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/evaluations/corpus": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Evaluation Corpus */
+        get: operations["evaluation_corpus_api_v1_evaluations_corpus_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/evaluations/compare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Compare Evaluations */
+        get: operations["compare_evaluations_api_v1_evaluations_compare_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/evaluations/{evaluation_id}": {
         parameters: {
             query?: never;
@@ -432,7 +535,8 @@ export interface paths {
         get: operations["get_evaluation_api_v1_evaluations__evaluation_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete Evaluation */
+        delete: operations["delete_evaluation_api_v1_evaluations__evaluation_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -489,6 +593,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/evaluations/{evaluation_id}/retry-plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Retry Plan */
+        get: operations["retry_plan_api_v1_evaluations__evaluation_id__retry_plan_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/evaluations/{evaluation_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Evaluation */
+        post: operations["retry_evaluation_api_v1_evaluations__evaluation_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/evaluations/{evaluation_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Archive Evaluation */
+        patch: operations["archive_evaluation_api_v1_evaluations__evaluation_id__archive_patch"];
+        trace?: never;
+    };
+    "/api/v1/evaluations/{evaluation_id}/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Evaluation Report */
+        get: operations["evaluation_report_api_v1_evaluations__evaluation_id__report_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -499,6 +671,39 @@ export interface components {
             text: string;
             /** Source Ids */
             source_ids: number[];
+        };
+        /** ArchiveRequest */
+        ArchiveRequest: {
+            /** Archived */
+            archived: boolean;
+        };
+        /** CaseSetRequest */
+        CaseSetRequest: {
+            /** Knowledge Base Id */
+            knowledge_base_id: string;
+            /** Name */
+            name: string;
+            /** Tags */
+            tags?: string[];
+            /** Cases */
+            cases: components["schemas"]["EvalCase"][];
+            /**
+             * Split
+             * @default development
+             * @enum {string}
+             */
+            split: "development" | "acceptance";
+            /**
+             * Review Status
+             * @default draft
+             * @enum {string}
+             */
+            review_status: "draft" | "verified";
+            /**
+             * Frozen
+             * @default false
+             */
+            frozen: boolean;
         };
         /** Conversation */
         Conversation: {
@@ -578,6 +783,7 @@ export interface components {
              * @default false
              */
             capture_trace: boolean;
+            evaluation_options?: components["schemas"]["EvaluationOptions"] | null;
             /**
              * Retrieval Mode
              * @default hybrid
@@ -758,6 +964,18 @@ export interface components {
              * @default
              */
             required_facts: string;
+            /**
+             * Judgment Scope
+             * @default full
+             * @enum {string}
+             */
+            judgment_scope: "full" | "partial";
+            /** Negative File Ids */
+            negative_file_ids?: string[];
+            /** Tags */
+            tags?: string[];
+            /** Evidence Groups */
+            evidence_groups?: components["schemas"]["EvidenceGroup"][];
         };
         /** EvalRequest */
         EvalRequest: {
@@ -789,6 +1007,45 @@ export interface components {
             file_ids?: string[] | null;
             /** Cases */
             cases: components["schemas"]["EvalCase"][];
+            /** Case Set Id */
+            case_set_id?: string | null;
+            options?: components["schemas"]["EvaluationOptions"];
+            /** Retry Of */
+            retry_of?: string | null;
+            /**
+             * Retry Unknown Confirmed
+             * @default false
+             */
+            retry_unknown_confirmed: boolean;
+        };
+        /** EvaluationOptions */
+        EvaluationOptions: {
+            /**
+             * Rerank
+             * @default inherit
+             * @enum {string}
+             */
+            rerank: "inherit" | "on" | "off";
+            /** Context Tokens */
+            context_tokens?: number | null;
+        };
+        /** EvidenceAnchor */
+        EvidenceAnchor: {
+            /** File Id */
+            file_id: string;
+            /** Content Hash */
+            content_hash: string;
+            /** Quote */
+            quote: string;
+            /** Page */
+            page?: number | null;
+        };
+        /** EvidenceGroup */
+        EvidenceGroup: {
+            /** Fact */
+            fact: string;
+            /** Alternatives */
+            alternatives: components["schemas"]["EvidenceAnchor"][];
         };
         /** FileDeleteResult */
         FileDeleteResult: {
@@ -998,6 +1255,19 @@ export interface components {
              */
             embedding_reindex_required: boolean;
         };
+        /** RetryRequest */
+        RetryRequest: {
+            /**
+             * Idempotency Key
+             * Format: uuid
+             */
+            idempotency_key: string;
+            /**
+             * Confirm Unknown Calls
+             * @default false
+             */
+            confirm_unknown_calls: boolean;
+        };
         /** Review */
         Review: {
             /**
@@ -1011,6 +1281,38 @@ export interface components {
              * @default
              */
             notes: string;
+            /**
+             * Fact Coverage
+             * @default pending
+             * @enum {string}
+             */
+            fact_coverage: "pending" | "full" | "partial" | "none";
+            /**
+             * Unsupported Claims
+             * @default pending
+             * @enum {string}
+             */
+            unsupported_claims: "pending" | "yes" | "no";
+            /**
+             * Conditions
+             * @default pending
+             * @enum {string}
+             */
+            conditions: "pending" | "pass" | "fail" | "na";
+            /**
+             * Citation Support
+             * @default pending
+             * @enum {string}
+             */
+            citation_support: "pending" | "full" | "partial" | "none" | "na";
+            /**
+             * Refusal
+             * @default pending
+             * @enum {string}
+             */
+            refusal: "pending" | "correct" | "incorrect" | "na";
+            /** Causes */
+            causes?: ("annotation_gap" | "parsing" | "retrieval" | "rerank" | "assembly" | "generation" | "unknown")[];
         };
         /** RunRequest */
         RunRequest: {
@@ -1025,6 +1327,7 @@ export interface components {
              * @default false
              */
             capture_trace: boolean;
+            evaluation_options?: components["schemas"]["EvaluationOptions"] | null;
             /**
              * Retrieval Mode
              * @default hybrid
@@ -1063,6 +1366,7 @@ export interface components {
              * @default false
              */
             capture_trace: boolean;
+            evaluation_options?: components["schemas"]["EvaluationOptions"] | null;
             /**
              * Retrieval Mode
              * @default hybrid
@@ -2402,7 +2706,9 @@ export interface operations {
     };
     list_evaluations_api_v1_evaluations_get: {
         parameters: {
-            query?: never;
+            query?: {
+                knowledge_base_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2480,7 +2786,333 @@ export interface operations {
             };
         };
     };
+    evaluation_history_api_v1_evaluations_history_get: {
+        parameters: {
+            query: {
+                knowledge_base_id: string;
+                archived?: boolean;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    evaluation_capabilities_api_v1_evaluations_capabilities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_case_sets_api_v1_evaluations_case_sets_get: {
+        parameters: {
+            query: {
+                knowledge_base_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    save_case_set_api_v1_evaluations_case_sets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CaseSetRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_case_set_api_v1_evaluations_case_sets__case_set_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_set_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    evaluation_corpus_api_v1_evaluations_corpus_get: {
+        parameters: {
+            query: {
+                knowledge_base_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    compare_evaluations_api_v1_evaluations_compare_get: {
+        parameters: {
+            query: {
+                left: string;
+                right: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     get_evaluation_api_v1_evaluations__evaluation_id__get: {
+        parameters: {
+            query?: {
+                tag?: string | null;
+            };
+            header?: never;
+            path: {
+                evaluation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_evaluation_api_v1_evaluations__evaluation_id__delete: {
         parameters: {
             query?: never;
             header?: never;
@@ -2608,6 +3240,176 @@ export interface operations {
     export_evaluation_api_v1_evaluations__evaluation_id__export_get: {
         parameters: {
             query?: never;
+            header?: never;
+            path: {
+                evaluation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    retry_plan_api_v1_evaluations__evaluation_id__retry_plan_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                evaluation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    retry_evaluation_api_v1_evaluations__evaluation_id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                evaluation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RetryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    archive_evaluation_api_v1_evaluations__evaluation_id__archive_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                evaluation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArchiveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    evaluation_report_api_v1_evaluations__evaluation_id__report_get: {
+        parameters: {
+            query?: {
+                tag?: string | null;
+            };
             header?: never;
             path: {
                 evaluation_id: string;

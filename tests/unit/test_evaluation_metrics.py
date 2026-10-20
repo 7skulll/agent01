@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.evaluation_metrics import retrieval_metrics, summarize
-from app.evaluations import EvalCase, EvalRequest
+from app.evaluation_models import EvalCase, EvalRequest
 
 
 def test_ir_metrics_use_unique_files_and_fixed_k_denominator():

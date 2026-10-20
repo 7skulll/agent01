@@ -1,9 +1,88 @@
 import type { Mode, Source, Run } from '../../api/types'
+export interface EvidenceGroup {
+  fact: string
+  alternatives: { file_id: string; content_hash: string; quote: string; page: number | null }[]
+}
+export interface QualitySummary {
+  total: number
+  answer_queries: number
+  verdicts: Record<string, number>
+  pass_rate: number | null
+  dimensions: Record<string, { judged: number; pending: number; na: number; rate: number | null }>
+  causes: Record<string, number>
+  reused: number
+  usage: {
+    known_tokens: number
+    known_queries: number
+    unknown_queries: number
+    new_model_calls: number
+  }
+}
+export interface HistoryItem {
+  evaluation_id: string
+  status: string
+  created_at: string
+  kind: string
+  kb_id: string
+  archived?: boolean
+  mode?: Mode
+}
+export interface HistoryPage {
+  items: HistoryItem[]
+  total: number
+  limit: number
+  offset: number
+}
+export interface ExperimentOptions {
+  rerank: 'inherit' | 'on' | 'off'
+  context_tokens: number | null
+}
+export interface CaseSet {
+  split?: 'development' | 'acceptance'
+  review_status?: 'draft' | 'verified'
+  frozen?: boolean
+  case_set_id: string
+  name: string
+  version: number
+  tags: string[]
+  cases: EvalCase[]
+}
+export interface AnswerReview {
+  verdict: string
+  notes: string
+  fact_coverage?: string
+  unsupported_claims?: string
+  conditions?: string
+  citation_support?: string
+  refusal?: string
+  causes?: string[]
+}
+export interface Comparison {
+  rows: {
+    query: string
+    delta: Scores
+    outcome: string
+    elapsed_ms_delta: number | null
+    tokens_delta: number | null
+  }[]
+  counts: Record<string, number>
+  metric_delta: Scores
+  config_changes: Record<string, unknown>
+  code_changed: boolean
+  modes: string[]
+  experiment_changes?: Record<string, unknown>
+  left_id?: string
+  right_id?: string
+}
 export interface EvalCase {
   query: string
   expected: 'unlabelled' | 'answerable' | 'unanswerable'
   relevant_file_ids: string[]
   required_facts: string
+  judgment_scope?: 'full' | 'partial'
+  negative_file_ids?: string[]
+  tags?: string[]
+  evidence_groups?: EvidenceGroup[]
 }
 export interface Scores {
   precision: number | null
@@ -14,6 +93,7 @@ export interface Scores {
 }
 export interface EvalResult {
   case: EvalCase
+  reused_from?: string
   status: string
   sources: Source[]
   context_sources?: Source[]
@@ -34,13 +114,35 @@ export interface EvalResult {
   metrics?: Scores | null
   elapsed_ms?: number
   error?: { code: string; message: string }
-  review: { verdict: string; notes: string }
+  judgments?: {
+    judged: number
+    returned: number
+    coverage: number | null
+    judged_precision: number | null
+  }
+  evidence?: {
+    valid: boolean
+    context_complete: boolean | null
+    causes: string[]
+    coverage: Record<string, number | null>
+    groups: {
+      fact: string
+      stages: Record<string, boolean>
+      alternatives: { file_id: string; quote: string; anchor_status: string }[]
+    }[]
+  }
+  review: AnswerReview
 }
 export interface EvalRecord {
   evaluation_id: string
+  quality?: QualitySummary
+  archived?: boolean
   status: string
   created_at: string
   request: {
+    options?: ExperimentOptions
+    retry_of?: string | null
+    case_set_id?: string | null
     knowledge_base_id: string
     kind: string
     mode: Mode
@@ -51,6 +153,14 @@ export interface EvalRecord {
   results: EvalResult[]
   error?: { code: string; message: string }
   snapshot: {
+    case_set?: {
+      name: string
+      version: number
+      tags?: string[]
+      frozen?: boolean
+      split?: CaseSet['split']
+      review_status?: CaseSet['review_status']
+    }
     fingerprint: string
     files: { file_id: string; name: string; content_hash: string }[]
     config: Record<string, unknown>
@@ -69,6 +179,10 @@ export interface EvalRecord {
     false_refusals: number
     answerable_total: number
     reviewed: number
+    partial_label_queries?: number
+    refusal_attempted?: number
+    context_evidence_queries?: number
+    context_evidence_complete?: number
   }
 }
 export const metricLabels: Record<keyof Scores, string> = {

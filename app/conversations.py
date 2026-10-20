@@ -27,7 +27,9 @@ class ConversationRepository:
                 "WHERE status='running' AND active_run_id IS NULL"
             )
 
-    async def create(self, *, purpose="chat") -> Conversation:
+    async def create(self, *, purpose="chat", owner_evaluation_id=None) -> Conversation:
+        if owner_evaluation_id is not None and purpose != "evaluation":
+            raise ValueError("Only evaluation conversations can have an evaluation owner.")
         now = datetime.now(timezone.utc).isoformat()
         item = Conversation(thread_id=uuid4(), created_at=now, updated_at=now, status="ready")
         async with self.transaction():
@@ -36,6 +38,14 @@ class ConversationRepository:
                 "VALUES (%s, %s, %s, %s, %s)",
                 (str(item.thread_id), now, now, "ready", purpose),
             )
+            if owner_evaluation_id is not None:
+                cursor = await self.connection.execute(
+                    "UPDATE evaluations SET owned_conversation_ids=owned_conversation_ids || "
+                    "jsonb_build_array(%s::text) WHERE evaluation_id=%s AND status='running'",
+                    (str(item.thread_id), owner_evaluation_id),
+                )
+                if not cursor.rowcount:
+                    raise ChatError("evaluation_not_running", "评测不存在或已结束。", 409)
         return item
 
     async def get(self, thread_id: str) -> Conversation:

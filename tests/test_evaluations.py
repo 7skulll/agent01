@@ -328,3 +328,167 @@ def test_sse_reports_deleted_run_without_escaping_generator(client):
         )
 
     client.portal.call(verify)
+
+
+def test_case_set_versions_bind_labels_and_corpus_and_remain_immutable(client):
+    file = upload(client, "default")
+    index(client, "default")
+    body = run_body(file["file_id"])
+    draft = {
+        "knowledge_base_id": "default",
+        "name": "人事问答",
+        "tags": ["年假"],
+        "cases": body["cases"],
+    }
+    first = client.post(BASE + "/case-sets", json=draft)
+    assert first.status_code == 201, first.text
+    saved = first.json()
+    assert saved["version"] == 1
+    assert (
+        client.post(BASE + "/case-sets", json=draft).json()["case_set_id"] == saved["case_set_id"]
+    )
+    assert len(client.get(BASE + "/case-sets?knowledge_base_id=default").json()) == 1
+    body.update(case_set_id=saved["case_set_id"], cases=saved["cases"])
+    report = finish(client, client.post(BASE, json=body))
+    assert report["snapshot"]["case_set"]["version"] == 1
+    draft["cases"][0]["required_facts"] = "十天年假"
+    second = client.post(BASE + "/case-sets", json=draft).json()
+    assert second["version"] == 2
+    assert (
+        client.get(BASE + "/case-sets/" + saved["case_set_id"]).json()["cases"][0]["required_facts"]
+        == ""
+    )
+    body.update(idempotency_key=str(uuid4()), cases=second["cases"])
+    assert client.post(BASE, json=body).status_code == 409  # edited cases, old version
+    body.update(cases=saved["cases"])
+    upload(client, "default", "new-document")
+    response = client.post(BASE, json=body)
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "case_set_stale"
+
+
+def test_partial_labels_and_evidence_coverage_are_saved_and_exported(client):
+    file = upload(client, "default")
+    index(client, "default")
+    corpus = client.get(BASE + "/corpus?knowledge_base_id=default").json()
+    assert corpus[0]["content_hash"] == file["content_hash"]
+    body = run_body(file["file_id"], kind="rag")
+    body["cases"][0].update(
+        judgment_scope="partial",
+        evidence_groups=[
+            {
+                "fact": "年假天数",
+                "alternatives": [
+                    {
+                        "file_id": file["file_id"],
+                        "content_hash": file["content_hash"],
+                        "quote": "员工年假十天",
+                    }
+                ],
+            }
+        ],
+    )
+    report = finish(client, client.post(BASE, json=body))
+    result = report["results"][0]
+    assert result["status"] == "completed", result
+    assert report["summary"]["metric_queries"] == 0
+    assert result["metrics"] is None
+    assert result["judgments"]["coverage"] == 1
+    assert result["evidence"]["context_complete"] is True
+    assert report["summary"]["context_evidence_complete"] == 1
+    review = {
+        "verdict": "partial",
+        "fact_coverage": "full",
+        "unsupported_claims": "no",
+        "conditions": "fail",
+        "citation_support": "full",
+        "refusal": "na",
+        "causes": ["generation"],
+        "notes": "条件遗漏",
+    }
+    response = client.patch(BASE + "/" + report["evaluation_id"] + "/reviews/0", json=review)
+    assert response.status_code == 200, response.text
+    assert response.json()["results"][0]["review"] == review
+    export = client.get(BASE + "/" + report["evaluation_id"] + "/export").json()
+    assert export["results"][0]["review"]["conditions"] == "fail"
+    assert export["results"][0]["evidence"]["coverage"]["context"] == 1
+
+
+def test_stale_evidence_is_reported_as_annotation_gap(client):
+    file = upload(client, "default")
+    index(client, "default")
+    body = run_body(file["file_id"])
+    body["cases"][0]["evidence_groups"] = [
+        {
+            "fact": "天数",
+            "alternatives": [
+                {"file_id": file["file_id"], "content_hash": "a" * 64, "quote": "员工年假十天"}
+            ],
+        }
+    ]
+    report = finish(client, client.post(BASE, json=body))
+    evidence = report["results"][0]["evidence"]
+    assert evidence["valid"] is False
+    assert evidence["coverage"]["selected"] is None
+    assert evidence["causes"] == ["annotation_gap"]
+
+
+def test_paired_comparison_on_real_retrieval_and_incompatible_labels(client):
+    file = upload(client, "default")
+    index(client, "default")
+    a = finish(client, client.post(BASE, json=run_body(file["file_id"])))
+    b = finish(client, client.post(BASE, json=run_body(file["file_id"])))
+    url = BASE + "/compare?left=" + a["evaluation_id"] + "&right=" + b["evaluation_id"]
+    response = client.get(url)
+    assert response.status_code == 200, response.text
+    assert response.json()["counts"] == {"win": 0, "tie": 1, "loss": 0, "unscored": 0}
+    assert response.json()["rows"][0]["tokens_delta"] is None
+    changed = run_body(file["file_id"])
+    changed["cases"][0]["required_facts"] = "新审核要求"
+    c = finish(client, client.post(BASE, json=changed))
+    response = client.get(url.replace(b["evaluation_id"], c["evaluation_id"]))
+    assert response.status_code == 409
+    assert "案例或标注不同" in response.text
+
+
+def test_history_filters_before_limit_and_retrieval_has_no_refusal_denominator(client):
+    report = finish(
+        client,
+        client.post(BASE, json=run_body(cases=[{"query": "未知", "expected": "unanswerable"}])),
+    )
+    assert report["summary"]["refusal_attempted"] == 0
+
+    async def seed():
+        from psycopg.types.json import Jsonb
+
+        service = client.app.state.evaluations
+        async with service.database.transaction():
+            for _ in range(31):
+                await service.database.connection.execute(
+                    "INSERT INTO evaluations(evaluation_id,idempotency_key,created_at,updated_at,"
+                    "status,request,snapshot) "
+                    "VALUES(%s,%s,'2099','2099','completed',%s,'{}')",
+                    (
+                        str(uuid4()),
+                        str(uuid4()),
+                        Jsonb({"knowledge_base_id": "other", "kind": "retrieval"}),
+                    ),
+                )
+
+    client.portal.call(seed)
+    assert len(client.get(BASE).json()) == 30
+    own = client.get(BASE + "?knowledge_base_id=default").json()
+    assert len(own) == 1 and own[0]["evaluation_id"] == report["evaluation_id"]
+
+
+def test_worker_control_polling_never_rebuilds_metric_curves(client, monkeypatch):
+    original = client.app.state.evaluations.row
+    calls = []
+
+    async def count(*args, **kwargs):
+        calls.append(args)
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(client.app.state.evaluations, "row", count)
+    finish(client, client.post(BASE, json=run_body()))
+    assert len(calls) == 2  # POST response and final GET only; worker polls the small control row.

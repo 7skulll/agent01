@@ -11,8 +11,8 @@ from app.config import Settings
 from app.conversations import ConversationNotFoundError, ConversationRepository
 from app.database import Database
 from app.errors import ChatError
+from app.evaluation_api import router as evaluation_router
 from app.evaluations import EvaluationService
-from app.evaluations import router as evaluation_router
 from app.http_errors import ErrorResponse, register_error_handlers
 from app.knowledge_bases import KnowledgeBaseService
 from app.knowledge_bases import router as knowledge_base_router

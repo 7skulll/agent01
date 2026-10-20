@@ -29,9 +29,38 @@ def retrieval_metrics(sources, relevant, k):
     }
 
 
-def summarize(results, k):
+def case_metrics(sources, case, k):
+    if case.get("judgment_scope", "full") != "full":
+        return None
+    return retrieval_metrics(sources, case["relevant_file_ids"], k)
+
+
+def judgment_coverage(sources, case, k):
+    ranked = file_ranking(sources)[:k]
+    positives = set(case["relevant_file_ids"])
+    full = case.get("judgment_scope", "full") == "full" and case["expected"] in (
+        "answerable",
+        "unanswerable",
+    )
+    judged = (
+        set(ranked) if full else set(ranked) & (positives | set(case.get("negative_file_ids", [])))
+    )
+    return {
+        "judged": len(judged),
+        "returned": len(ranked),
+        "coverage": len(judged) / len(ranked) if ranked else None,
+        "judged_precision": len(positives & judged) / len(judged) if judged else None,
+    }
+
+
+def summarize(results, k, *, kind=None):
     # Failed labelled cases count as zero; stopped/unattempted cases are excluded.
-    labelled = [r for r in results if r["case"]["expected"] == "answerable"]
+    labelled = [
+        r
+        for r in results
+        if r["case"]["expected"] == "answerable"
+        and r["case"].get("judgment_scope", "full") == "full"
+    ]
     eligible = [r for r in labelled if r["status"] in ("completed", "failed")]
     values = [
         r.get("metrics") or dict.fromkeys(("precision", "recall", "hit", "mrr", "ndcg"), 0)
@@ -42,7 +71,13 @@ def summarize(results, k):
         for key in ("precision", "recall", "hit", "mrr", "ndcg")
     }
     completed = [r for r in results if r["status"] == "completed"]
-    negatives = [r for r in completed if r["case"]["expected"] == "unanswerable" and r.get("run")]
+    negatives = [
+        r
+        for r in completed
+        if r["case"]["expected"] == "unanswerable"
+        and r["case"].get("judgment_scope", "full") == "full"
+        and r.get("run")
+    ]
     positives = [r for r in completed if r["case"]["expected"] == "answerable" and r.get("run")]
     return {
         "k": k,
@@ -60,6 +95,26 @@ def summarize(results, k):
             r["run"]["answer_status"] == "insufficient_evidence" for r in positives
         ),
         "answerable_total": len(positives),
+        "partial_label_queries": sum(r["case"].get("judgment_scope") == "partial" for r in results),
+        "refusal_attempted": sum(
+            r["case"]["expected"] == "unanswerable"
+            and r["case"].get("judgment_scope", "full") == "full"
+            and kind != "retrieval"
+            and r["status"] in ("completed", "failed")
+            for r in results
+        ),
+        "answerable_attempted": sum(
+            r["case"]["expected"] == "answerable"
+            and kind != "retrieval"
+            and r["status"] in ("completed", "failed")
+            for r in results
+        ),
+        "context_evidence_queries": sum(
+            r.get("evidence", {}).get("context_complete") is not None for r in completed
+        ),
+        "context_evidence_complete": sum(
+            r.get("evidence", {}).get("context_complete") is True for r in completed
+        ),
         "reviewed": sum(
             r.get("review", {}).get("verdict", "pending") != "pending" for r in results
         ),

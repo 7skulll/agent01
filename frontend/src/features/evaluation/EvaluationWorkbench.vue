@@ -1,18 +1,31 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { request, base, date } from '../../api/client'
-import { api } from '../../api/client'
+import { request, date, api } from '../../api/client'
 import { modeLabels, type Mode, type Source } from '../../api/types'
 import {
   metricLabels,
   evaluationStatus,
   type EvalCase,
   type EvalRecord,
-  type EvalResult,
   type Scores,
+  type CaseSet,
+  type HistoryPage,
+  type ExperimentOptions,
 } from './types'
+import {
+  blankCase as blank,
+  normalizeCases,
+  parseCases,
+  actualTokens as tokenCount,
+  caseSetSignature,
+} from './cases'
+import { download } from './download'
+import { useReviewDraft } from './useReviewDraft'
 import MetricChart from './MetricChart.vue'
+import QualityOverview from './QualityOverview.vue'
+import EvidenceEditor from './EvidenceEditor.vue'
+import ExperimentComparison from './ExperimentComparison.vue'
 import ErrorBanner from '../../components/ErrorBanner.vue'
 import MarkdownAnswer from '../../components/MarkdownAnswer.vue'
 import SourcePanel from '../../components/SourcePanel.vue'
@@ -23,64 +36,307 @@ const mode = ref<Mode>('hybrid'),
   k = ref(5),
   scoped = ref(false),
   scope = ref<string[]>([])
-const blank = (): EvalCase => ({
-  query: '',
-  expected: 'unlabelled',
-  relevant_file_ids: [],
-  required_facts: '',
-})
 const cases = ref<EvalCase[]>([blank()]),
   busy = ref(false),
   error = ref<unknown>(null),
   selectedIndex = ref(0),
   source = ref<Source | null>(null)
 const id = ref(''),
-  verdict = ref('pending'),
-  notes = ref(''),
   importing = ref<HTMLInputElement>()
+const options = ref<ExperimentOptions>({ rerank: 'inherit', context_tokens: null })
+const comparisonEpoch = ref(0)
+const historyOffset = ref(0),
+  showArchived = ref(false),
+  tag = ref('')
+const setSplit = ref<'development' | 'acceptance'>('development'),
+  setVerified = ref(false),
+  setFrozen = ref(false)
+const retryPlan = ref<{
+    retry_indices: number[]
+    unknown_indices: number[]
+    reuse_count: number
+  }>(),
+  confirmUnknown = ref(false)
+let retryKey: { parent: string; confirm: boolean; key: string } | undefined
+watch(kind, (value) => {
+  if (value !== 'rag') options.value.context_tokens = null
+})
+watch(showArchived, () => {
+  historyOffset.value = 0
+})
 let pending: { signature: string; key: string } | undefined
 const files = useQuery({
   queryKey: computed(() => ['all-files', props.kbId]),
   enabled: computed(() => !!props.kbId),
   queryFn: () => api.allFiles(props.kbId),
 })
-const history = useQuery({
-  queryKey: ['evaluations'],
+const capabilities = useQuery({
+  queryKey: ['evaluation-capabilities'],
   queryFn: () =>
-    request<
-      { evaluation_id: string; status: string; kb_id: string; created_at: string; kind: string }[]
-    >('/evaluations'),
+    request<{
+      max_model_calls_per_case: number
+      default_context_tokens: number
+      rerank_available: boolean
+    }>('/evaluations/capabilities'),
+})
+watch(setVerified, (value) => {
+  if (!value) setFrozen.value = false
+})
+const corpus = useQuery({
+  queryKey: computed(() => ['evaluation-corpus', props.kbId]),
+  queryFn: async () => {
+    const rows = await request<{ file_id: string; name: string; content_hash: string }[]>(
+      `/evaluations/corpus?knowledge_base_id=${encodeURIComponent(props.kbId)}`,
+    )
+    return Array.isArray(rows) ? rows : []
+  },
+  enabled: computed(() => !!props.kbId),
+})
+const caseSets = useQuery({
+  queryKey: computed(() => ['case-sets', props.kbId]),
+  queryFn: async () => {
+    const rows = await request<CaseSet[]>(
+      `/evaluations/case-sets?knowledge_base_id=${encodeURIComponent(props.kbId)}`,
+    )
+    return Array.isArray(rows) ? rows : []
+  },
+  enabled: computed(() => !!props.kbId),
+})
+const setId = ref(''),
+  setName = ref(''),
+  setTags = ref(''),
+  loadedCases = ref('')
+const draftSignature = computed(() =>
+  caseSetSignature(cases.value, {
+    name: setName.value,
+    tags: setTags.value.split(/[,，]/),
+    split: setSplit.value,
+    review_status: setVerified.value ? 'verified' : 'draft',
+    frozen: setFrozen.value,
+  }),
+)
+const boundSet = computed(() =>
+  setId.value && loadedCases.value === draftSignature.value ? setId.value : null,
+)
+function loadSavedSet(saved: CaseSet) {
+  setId.value = saved.case_set_id
+  cases.value = normalizeCases(saved.cases)
+  setName.value = saved.name
+  setTags.value = saved.tags.join(', ')
+  setSplit.value = saved.split || 'development'
+  setVerified.value = saved.review_status === 'verified'
+  setFrozen.value = saved.frozen || false
+  loadedCases.value = caseSetSignature(cases.value, saved)
+}
+const reviewFields = [
+  {
+    key: 'fact_coverage',
+    label: '必要事实覆盖',
+    options: { pending: '待审核', full: '完整', partial: '部分', none: '未覆盖' },
+  },
+  {
+    key: 'unsupported_claims',
+    label: '存在无依据事实',
+    options: { pending: '待审核', yes: '有', no: '无' },
+  },
+  {
+    key: 'conditions',
+    label: '适用条件与例外',
+    options: { pending: '待审核', pass: '正确完整', fail: '遗漏或错误', na: '不适用' },
+  },
+  {
+    key: 'citation_support',
+    label: '引用语义支持',
+    options: {
+      pending: '待审核',
+      full: '完整支持',
+      partial: '部分支持',
+      none: '不支持',
+      na: '不适用',
+    },
+  },
+  {
+    key: 'refusal',
+    label: '拒答判断',
+    options: { pending: '待审核', correct: '正确', incorrect: '错误', na: '不适用' },
+  },
+] as const
+const causeLabels: Record<string, string> = {
+  annotation_gap: '标注失效或未映射',
+  parsing: '解析',
+  retrieval: '召回',
+  rerank: '重排',
+  assembly: '组装',
+  generation: '生成',
+  unknown: '待确认',
+  retrieval_miss: '召回未包含必要原文',
+  rerank_loss: '重排阶段丢失',
+  selection_loss: '最终候选截断',
+  assembly_loss: '上下文组装丢失',
+}
+const stages: Record<string, string> = {
+  parsed: '已解析原文',
+  retrieved: '初排召回',
+  reranked: '重排后',
+  selected: '最终候选',
+  context: '进入上下文',
+}
+function resetLabels(c: EvalCase) {
+  c.relevant_file_ids = []
+  c.negative_file_ids = []
+  c.evidence_groups = []
+}
+async function saveSet() {
+  busy.value = true
+  error.value = null
+  const kb = props.kbId
+  try {
+    const saved = await request<CaseSet>('/evaluations/case-sets', {
+      method: 'POST',
+      body: JSON.stringify({
+        knowledge_base_id: kb,
+        name: setName.value,
+        tags: setTags.value
+          .split(/[,，]/)
+          .map((t) => t.trim())
+          .filter(Boolean),
+        cases: cases.value,
+        split: setSplit.value,
+        review_status: setVerified.value ? 'verified' : 'draft',
+        frozen: setFrozen.value,
+      }),
+    })
+    if (kb === props.kbId) {
+      loadSavedSet(saved)
+    }
+    await client.invalidateQueries({ queryKey: ['case-sets', kb] })
+  } catch (e) {
+    if (kb === props.kbId) error.value = e
+  } finally {
+    busy.value = false
+  }
+}
+async function loadSet() {
+  if (!setId.value) return
+  busy.value = true
+  error.value = null
+  const selectedId = setId.value,
+    kb = props.kbId
+  try {
+    const saved = await request<CaseSet>(`/evaluations/case-sets/${selectedId}`)
+    if (kb === props.kbId && selectedId === setId.value) {
+      loadSavedSet(saved)
+    }
+  } catch (e) {
+    if (kb === props.kbId) error.value = e
+  } finally {
+    busy.value = false
+  }
+}
+const history = useQuery({
+  queryKey: computed(() => ['evaluations', props.kbId, showArchived.value, historyOffset.value]),
+  enabled: computed(() => !!props.kbId),
+  queryFn: ({ queryKey }) =>
+    request<HistoryPage>(
+      `/evaluations/history?knowledge_base_id=${encodeURIComponent(String(queryKey[1]))}&archived=${queryKey[2]}&limit=20&offset=${queryKey[3]}`,
+    ),
   refetchInterval: 5000,
 })
-const ownHistory = computed(() => (history.data.value || []).filter((r) => r.kb_id === props.kbId))
+watch(history.data, (page) => {
+  if (
+    page &&
+    page.offset === historyOffset.value &&
+    historyOffset.value >= page.total &&
+    historyOffset.value > 0
+  ) {
+    historyOffset.value = page.total ? Math.floor((page.total - 1) / 20) * 20 : 0
+    void client.invalidateQueries({
+      queryKey: ['evaluations', props.kbId, showArchived.value, historyOffset.value],
+    })
+  }
+})
+const ownHistory = computed(() =>
+  (history.data.value?.items || []).filter((r) => r.kb_id === props.kbId),
+)
 const record = useQuery({
-  queryKey: computed(() => ['evaluation', id.value]),
+  queryKey: computed(() => ['evaluation', id.value, tag.value]),
   enabled: computed(() => !!id.value),
-  queryFn: () => request<EvalRecord>(`/evaluations/${id.value}`),
+  queryFn: ({ queryKey }) =>
+    request<EvalRecord>(
+      `/evaluations/${queryKey[1]}?tag=${encodeURIComponent(String(queryKey[2]))}`,
+    ),
   refetchInterval: (q) => (q.state.data?.status === 'running' ? 1000 : false),
 })
 const current = computed(() =>
   record.data.value?.request.knowledge_base_id === props.kbId ? record.data.value : undefined,
 )
+const comparisonHistory = computed(() => {
+  const r = current.value
+  return r && !ownHistory.value.some((item) => item.evaluation_id === r.evaluation_id)
+    ? [
+        ...ownHistory.value,
+        {
+          evaluation_id: r.evaluation_id,
+          status: r.status,
+          created_at: r.created_at,
+          kind: r.request.kind,
+          kb_id: props.kbId,
+        },
+      ]
+    : ownHistory.value
+})
 const active = computed(() => current.value?.status === 'running')
-const selected = computed(() => current.value?.results[selectedIndex.value])
+const availableTags = computed(() => [
+  ...new Set(current.value?.request.cases.flatMap((c) => c.tags || []) || []),
+])
+const visibleResults = computed(() =>
+  (current.value?.results || [])
+    .map((result, index) => ({ result, index }))
+    .filter(({ result }) => !tag.value || result.case.tags?.includes(tag.value)),
+)
+watch(visibleResults, (rows) => {
+  if (!rows.some((r) => r.index === selectedIndex.value)) selectedIndex.value = rows[0]?.index ?? 0
+})
+const selected = computed(() =>
+  visibleResults.value.some((r) => r.index === selectedIndex.value)
+    ? current.value?.results[selectedIndex.value]
+    : undefined,
+)
+const reviewKey = computed(() => `${id.value}:${selectedIndex.value}`)
+const { draft: dimensions, saved: reviewSaved } = useReviewDraft(reviewKey, selected)
 const labels = Object.keys(metricLabels) as (keyof Scores)[]
 watch(
   () => props.kbId,
   () => {
     id.value = localStorage.getItem(`rag-evaluation:${props.kbId}`) || ''
     cases.value = [blank()]
+    setId.value = ''
+    setName.value = ''
+    setTags.value = ''
+    loadedCases.value = ''
     scope.value = []
     scoped.value = false
     selectedIndex.value = 0
     source.value = null
     error.value = null
     pending = undefined
+    tag.value = ''
+    historyOffset.value = 0
+    showArchived.value = false
+    options.value = { rerank: 'inherit', context_tokens: null }
+    setSplit.value = 'development'
+    setVerified.value = false
+    setFrozen.value = false
   },
   { immediate: true },
 )
 watch(id, (value) => {
   if (value) localStorage.setItem(`rag-evaluation:${props.kbId}`, value)
+  else localStorage.removeItem(`rag-evaluation:${props.kbId}`)
+  tag.value = ''
+  retryPlan.value = undefined
+  confirmUnknown.value = false
+  retryKey = undefined
   selectedIndex.value = 0
 })
 watch(ownHistory, (rows) => {
@@ -88,10 +344,6 @@ watch(ownHistory, (rows) => {
     const running = rows.find((r) => r.status === 'running')
     if (running) id.value = running.evaluation_id
   }
-})
-watch(selected, (r) => {
-  verdict.value = r?.review?.verdict || 'pending'
-  notes.value = r?.review?.notes || ''
 })
 const status = (value: string) => evaluationStatus[value] || value
 const percent = (value: number | null | undefined) =>
@@ -108,11 +360,106 @@ function loadConfiguration() {
   if (!r || busy.value || active.value) return
   kind.value = r.request.kind
   mode.value = r.request.mode
+  options.value = { rerank: 'inherit', context_tokens: null, ...r.request.options }
   k.value = r.request.k
   scoped.value = r.request.file_ids !== null
   scope.value = [...(r.request.file_ids || [])]
-  cases.value = JSON.parse(JSON.stringify(r.request.cases))
+  cases.value = normalizeCases(r.request.cases)
+  const saved = r.snapshot.case_set
+  if (r.request.case_set_id && saved)
+    loadSavedSet({
+      ...saved,
+      case_set_id: r.request.case_set_id,
+      tags: saved.tags || [],
+      cases: r.request.cases,
+    })
+  else {
+    setId.value = ''
+    loadedCases.value = ''
+  }
   pending = undefined
+}
+function acceptRecord(response: EvalRecord) {
+  client.setQueryData(['evaluation', response.evaluation_id, ''], response)
+  void client.invalidateQueries({ queryKey: ['evaluation', response.evaluation_id] })
+}
+async function manageRecord(action: 'archive' | 'delete') {
+  if (busy.value || active.value || !current.value) return
+  const target = current.value,
+    kb = props.kbId
+  if (
+    action === 'delete' &&
+    !window.confirm('删除此评测及其专用会话？删除后无法从历史恢复。复用结果保存在关联实验中。')
+  )
+    return
+  busy.value = true
+  error.value = null
+  try {
+    if (action === 'delete')
+      await request(`/evaluations/${target.evaluation_id}`, { method: 'DELETE' })
+    else
+      await request(`/evaluations/${target.evaluation_id}/archive`, {
+        method: 'PATCH',
+        body: JSON.stringify({ archived: !target.archived }),
+      })
+    client.removeQueries({ queryKey: ['evaluation', target.evaluation_id] })
+    if (kb === props.kbId) comparisonEpoch.value++
+    if (kb === props.kbId && id.value === target.evaluation_id) id.value = ''
+    await client.invalidateQueries({ queryKey: ['evaluations'] })
+  } catch (e) {
+    if (kb === props.kbId) error.value = e
+  } finally {
+    busy.value = false
+  }
+}
+async function prepareRetry() {
+  if (!id.value || active.value || busy.value) return
+  const target = id.value
+  try {
+    const plan = await request<typeof retryPlan.value>(`/evaluations/${target}/retry-plan`)
+    if (id.value === target) {
+      retryPlan.value = plan
+      confirmUnknown.value = false
+    }
+  } catch (e) {
+    if (id.value === target) error.value = e
+  }
+}
+async function retry() {
+  if (!id.value || !retryPlan.value || busy.value || active.value) return
+  const target = id.value,
+    kb = props.kbId
+  if (!retryKey || retryKey.parent !== target || retryKey.confirm !== confirmUnknown.value)
+    retryKey = { parent: target, confirm: confirmUnknown.value, key: crypto.randomUUID() }
+  busy.value = true
+  error.value = null
+  try {
+    const response = await request<EvalRecord>(`/evaluations/${target}/retry`, {
+      method: 'POST',
+      body: JSON.stringify({
+        idempotency_key: retryKey.key,
+        confirm_unknown_calls: confirmUnknown.value,
+      }),
+    })
+    acceptRecord(response)
+    if (props.kbId === kb && id.value === target) id.value = response.evaluation_id
+    await client.invalidateQueries({ queryKey: ['evaluations'] })
+  } catch (e) {
+    if (kb === props.kbId) error.value = e
+  } finally {
+    busy.value = false
+  }
+}
+async function exportReport() {
+  const target = id.value
+  try {
+    const report = await request<{ markdown: string }>(
+      `/evaluations/${target}/report?tag=${encodeURIComponent(tag.value)}`,
+    )
+    download(`rag-acceptance-${target}.md`, report.markdown, 'text/markdown;charset=utf-8')
+  } catch (e) {
+    if (id.value === target) error.value = e
+  }
 }
 async function start() {
   if (busy.value || active.value) return
@@ -126,6 +473,8 @@ async function start() {
     k: k.value,
     file_ids: scoped.value ? [...scope.value] : null,
     cases: cases.value,
+    case_set_id: boundSet.value,
+    options: options.value,
   }
   const signature = JSON.stringify(payload)
   if (!pending || pending.signature !== signature) pending = { signature, key: crypto.randomUUID() }
@@ -134,7 +483,7 @@ async function start() {
       method: 'POST',
       body: JSON.stringify({ ...payload, idempotency_key: pending.key }),
     })
-    client.setQueryData(['evaluation', response.evaluation_id], response)
+    acceptRecord(response)
     if (props.kbId === kbId) {
       id.value = response.evaluation_id
       selectedIndex.value = 0
@@ -149,27 +498,33 @@ async function start() {
 }
 async function stop() {
   if (!id.value || busy.value) return
+  const target = id.value
   busy.value = true
   try {
-    const response = await request<EvalRecord>(`/evaluations/${id.value}/stop`, { method: 'POST' })
-    client.setQueryData(['evaluation', response.evaluation_id], response)
+    const response = await request<EvalRecord>(`/evaluations/${target}/stop`, { method: 'POST' })
+    acceptRecord(response)
   } catch (e) {
-    error.value = e
+    if (id.value === target) error.value = e
   } finally {
     busy.value = false
   }
 }
 async function review() {
-  if (!selected.value || !id.value || active.value) return
+  if (!selected.value || !id.value || active.value || busy.value) return
+  const target = id.value,
+    index = selectedIndex.value,
+    kb = props.kbId
+  const submitted = JSON.parse(JSON.stringify(dimensions.value))
   busy.value = true
   try {
-    const response = await request<EvalRecord>(
-      `/evaluations/${id.value}/reviews/${selectedIndex.value}`,
-      { method: 'PATCH', body: JSON.stringify({ verdict: verdict.value, notes: notes.value }) },
-    )
-    client.setQueryData(['evaluation', response.evaluation_id], response)
+    const response = await request<EvalRecord>(`/evaluations/${target}/reviews/${index}`, {
+      method: 'PATCH',
+      body: JSON.stringify(submitted),
+    })
+    reviewSaved(`${target}:${index}`, submitted, response.results[index]!.review)
+    acceptRecord(response)
   } catch (e) {
-    error.value = e
+    if (kb === props.kbId && id.value === target) error.value = e
   } finally {
     busy.value = false
   }
@@ -177,48 +532,24 @@ async function review() {
 async function importCases(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0]
   if (!file) return
+  const kb = props.kbId
   try {
-    if (file.size > 256 * 1024) throw new Error('案例文件不能超过 256 KiB。')
-    const data = JSON.parse(await file.text())
-    const rows = Array.isArray(data) ? data : data.cases
-    if (!Array.isArray(rows) || !rows.length || rows.length > 20)
-      throw new Error('请导入 1–20 条案例的 JSON 数组。')
-    cases.value = rows.map((r: any) => {
-      if (
-        typeof r.query !== 'string' ||
-        !r.query.trim() ||
-        r.query.length > 4000 ||
-        !['unlabelled', 'answerable', 'unanswerable'].includes(r.expected || 'unlabelled') ||
-        !Array.isArray(r.relevant_file_ids || [])
-      )
-        throw new Error('案例字段格式无效。')
-      return {
-        query: r.query,
-        expected: r.expected || 'unlabelled',
-        relevant_file_ids: r.relevant_file_ids || [],
-        required_facts: r.required_facts || '',
-      }
-    })
+    if (file.size > 8 * 1024 * 1024) throw new Error('案例文件不能超过 8 MiB。')
+    const parsed = parseCases(JSON.parse(await file.text()))
+    if (kb === props.kbId) cases.value = parsed
   } catch (e) {
-    error.value = e
+    if (kb === props.kbId) error.value = e
   } finally {
     ;(event.target as HTMLInputElement).value = ''
   }
 }
-function download(name: string, contents: string, type = 'application/json') {
-  const url = URL.createObjectURL(new Blob([contents], { type }))
-  const link = document.createElement('a')
-  link.href = url
-  link.download = name
-  link.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
 async function exportJson() {
+  const target = id.value
   try {
-    const r = await request<EvalRecord>(`/evaluations/${id.value}`)
-    download(`evaluation-${id.value}.json`, JSON.stringify(r, null, 2))
+    const r = await request<EvalRecord>(`/evaluations/${target}`)
+    download(`evaluation-${target}.json`, JSON.stringify(r, null, 2))
   } catch (e) {
-    error.value = e
+    if (id.value === target) error.value = e
   }
 }
 function exportCsv() {
@@ -242,7 +573,7 @@ function exportCsv() {
       '人工评价',
       '回答',
     ],
-    ...current.value.results.map((r) => [
+    ...visibleResults.value.map(({ result: r }) => [
       r.case.query,
       r.status,
       r.case.expected,
@@ -297,21 +628,20 @@ const timing = computed(() => {
   return rows
 })
 const maxTime = computed(() => Math.max(1, ...timing.value.map(([, v]) => v)))
-const tokenCount = (r: EvalResult) => {
-  const events = r.token_usage || []
-  return events.some(
-    (e) =>
-      typeof e.actual?.input_tokens === 'number' || typeof e.actual?.output_tokens === 'number',
-  )
-    ? events.reduce((n, e) => n + (e.actual?.input_tokens || 0) + (e.actual?.output_tokens || 0), 0)
-    : null
-}
 </script>
 <template>
   <div class="eval-layout">
     <form class="card eval-config" @submit.prevent="start">
       <h2>实验配置</h2>
       <p class="small muted">最多 20 题、逐题运行。完整 RAG 会调用回答模型。</p>
+      <p
+        v-if="kind === 'rag' && capabilities.data.value?.max_model_calls_per_case"
+        class="small muted"
+      >
+        本批应用层模型调用上限
+        {{ cases.length * capabilities.data.value.max_model_calls_per_case }} 次；不含
+        Embedding、重排与供应商内部重试。实际用量在结果中展示。
+      </p>
       <label class="field"
         >运行方式<select v-model="kind" aria-label="评测运行方式" :disabled="busy || active">
           <option value="retrieval">仅检索</option>
@@ -325,6 +655,29 @@ const tokenCount = (r: EvalResult) => {
           </option>
         </select></label
       >
+      <details class="eval-experiment-options">
+        <summary>受控实验参数</summary>
+        <label class="field"
+          >重排<select v-model="options.rerank" aria-label="实验重排" :disabled="busy || active">
+            <option value="inherit">跟随工作空间</option>
+            <option value="on">开启（须已配置）</option>
+            <option value="off">关闭</option>
+          </select></label
+        >
+        <label v-if="kind === 'rag'" class="field"
+          >资料 Token 预算<select
+            v-model="options.context_tokens"
+            aria-label="实验上下文预算"
+            :disabled="busy || active"
+          >
+            <option :value="null">跟随工作空间</option>
+            <option v-for="n in [512, 1024, 2048, 4096, 8192]" :key="n" :value="n">{{ n }}</option>
+          </select></label
+        >
+        <p class="small muted">
+          只作用于本次实验，实际输入仍受模型窗口及回答/修复预留限制。开启重排不会替你配置模型。
+        </p>
+      </details>
       <label class="field"
         >指标 K<input
           v-model.number="k"
@@ -337,7 +690,7 @@ const tokenCount = (r: EvalResult) => {
       /></label>
       <p class="small muted">
         K
-        用于指标，不改变问答候选配置。文件级排名会将同文件多个切片去重；相关文件标注按穷尽集合解释。
+        用于指标，不改变问答候选配置。文件级排名会将同文件多个切片去重；只有完整标注参与质量均值，部分标注仅显示已审核覆盖率。
       </p>
       <label
         ><input v-model="scoped" type="checkbox" :disabled="busy || active" />
@@ -351,6 +704,77 @@ const tokenCount = (r: EvalResult) => {
         >
         <p v-if="!scope.length" class="small muted">范围为空，不会回退到全库。</p>
       </div>
+      <details class="eval-case-sets">
+        <summary>案例集与版本</summary>
+        <label class="field"
+          >已保存版本<select
+            v-model="setId"
+            aria-label="案例集版本"
+            @change="loadedCases = ''"
+            :disabled="busy || active"
+          >
+            <option value="">未选择</option>
+            <option
+              v-for="saved in caseSets.data.value"
+              :key="saved.case_set_id"
+              :value="saved.case_set_id"
+            >
+              {{ saved.name }} · v{{ saved.version }} · {{ saved.tags.join(' / ') }}
+            </option>
+          </select></label
+        >
+        <button type="button" class="button" :disabled="!setId || busy || active" @click="loadSet">
+          载入案例集
+        </button>
+        <label class="field"
+          >名称<input
+            v-model="setName"
+            aria-label="案例集名称"
+            maxlength="100"
+            :disabled="busy || active"
+        /></label>
+        <label class="field"
+          >业务标签<input
+            v-model="setTags"
+            aria-label="案例集标签"
+            placeholder="年假, 人事"
+            :disabled="busy || active"
+        /></label>
+        <label class="field"
+          >集合用途<select v-model="setSplit" aria-label="案例集用途" :disabled="busy || active">
+            <option value="development">开发调试</option>
+            <option value="acceptance">验收测试</option>
+          </select></label
+        >
+        <label
+          ><input
+            v-model="setVerified"
+            type="checkbox"
+            :disabled="busy || active"
+          />案例已由人工核验</label
+        >
+        <label
+          ><input
+            v-model="setFrozen"
+            type="checkbox"
+            :disabled="busy || active || !setVerified"
+          />标记为冻结版本（须完整标注及必要原文）</label
+        >
+        <button
+          type="button"
+          class="button"
+          :disabled="!setName.trim() || busy || active || cases.some((c) => !c.query.trim())"
+          @click="saveSet"
+        >
+          保存案例集版本
+        </button>
+        <p class="small muted">
+          {{
+            boundSet ? '已绑定保存版本。' : '当前草稿未绑定版本。'
+          }}修改后保存将生成新版本；已有版本保持不变。每版最多 20 题。
+        </p>
+        <ErrorBanner :error="caseSets.error.value" />
+      </details>
       <div class="eval-case-list">
         <fieldset v-for="(c, i) in cases" :key="i" :disabled="busy || active">
           <legend>案例 {{ i + 1 }}</legend>
@@ -366,7 +790,7 @@ const tokenCount = (r: EvalResult) => {
             >预期<select
               v-model="c.expected"
               :aria-label="`案例 ${i + 1} 预期`"
-              @change="c.relevant_file_ids = []"
+              @change="resetLabels(c)"
             >
               <option value="unlabelled">未标注（仅观察）</option>
               <option value="answerable">资料中有答案</option>
@@ -376,11 +800,56 @@ const tokenCount = (r: EvalResult) => {
           <div v-if="c.expected === 'answerable'" class="file-options">
             <strong class="small">相关文件（必选）</strong
             ><label v-for="f in files.data.value" :key="f.file_id"
-              ><input v-model="c.relevant_file_ids" type="checkbox" :value="f.file_id" />{{
-                f.name
-              }}</label
+              ><input
+                v-model="c.relevant_file_ids"
+                type="checkbox"
+                :value="f.file_id"
+                @change="
+                  c.negative_file_ids =
+                    c.negative_file_ids?.filter((id) => !c.relevant_file_ids.includes(id)) || []
+                "
+              />{{ f.name }}</label
             >
           </div>
+          <label class="field"
+            >业务标签<input
+              :value="(c.tags || []).join(', ')"
+              :aria-label="`案例 ${i + 1} 业务标签`"
+              placeholder="同场景同标签；逗号分隔"
+              maxlength="800"
+              @change="
+                c.tags = ($event.target as HTMLInputElement).value
+                  .split(/[,，]/)
+                  .map((t) => t.trim())
+                  .filter(Boolean)
+              "
+          /></label>
+          <label class="field"
+            >标注范围<select v-model="c.judgment_scope" :aria-label="`案例 ${i + 1} 标注范围`">
+              <option value="full">完整（已穷尽相关文件）</option>
+              <option value="partial">部分（其他文件仍待审核）</option>
+            </select></label
+          >
+          <details v-if="c.judgment_scope === 'partial'">
+            <summary>明确不相关的文件</summary>
+            <div class="file-options">
+              <label v-for="f in files.data.value" :key="f.file_id"
+                ><input
+                  v-model="c.negative_file_ids"
+                  type="checkbox"
+                  :value="f.file_id"
+                  :disabled="c.relevant_file_ids.includes(f.file_id)"
+                />{{ f.name }}</label
+              >
+            </div>
+          </details>
+          <EvidenceEditor
+            v-if="c.expected === 'answerable' && c.evidence_groups"
+            v-model="c.evidence_groups"
+            :files="
+              (corpus.data.value || []).filter((f) => c.relevant_file_ids.includes(f.file_id))
+            "
+          />
           <details>
             <summary>答案人工审核要点</summary>
             <textarea
@@ -448,11 +917,18 @@ const tokenCount = (r: EvalResult) => {
       <button v-if="active" type="button" class="button full" :disabled="busy" @click="stop">
         停止评测
       </button>
-      <ErrorBanner :error="files.error.value" />
+      <ErrorBanner :error="files.error.value || corpus.error.value" />
     </form>
     <section class="eval-results">
       <ErrorBanner :error="error || record.error.value || history.error.value" />
       <div class="card eval-history">
+        <label
+          ><input
+            v-model="showArchived"
+            type="checkbox"
+            aria-label="查看已归档评测"
+          />查看已归档评测</label
+        >
         <label class="field"
           >评测记录<select v-model="id" aria-label="评测记录">
             <option value="">选择历史记录</option>
@@ -462,14 +938,40 @@ const tokenCount = (r: EvalResult) => {
             </option>
           </select></label
         >
+        <div class="eval-actions">
+          <button
+            class="button"
+            :disabled="historyOffset === 0"
+            @click="historyOffset = Math.max(0, historyOffset - 20)"
+          >
+            上一页评测</button
+          ><span
+            >共 {{ history.data.value?.total || 0 }} 条 · 第
+            {{ Math.floor(historyOffset / 20) + 1 }} 页</span
+          ><button
+            class="button"
+            :disabled="historyOffset + 20 >= (history.data.value?.total || 0)"
+            @click="historyOffset += 20"
+          >
+            下一页评测
+          </button>
+        </div>
       </div>
+      <ExperimentComparison
+        :key="`${kbId}:${comparisonEpoch}`"
+        :current-id="id"
+        :history="comparisonHistory"
+      />
       <template v-if="current">
         <div class="result-heading">
           <div>
             <h2>
-              {{ status(current.status) }} · {{ current.results.length }}/{{
-                current.request.cases.length
-              }}
+              {{ status(current.status) }} ·
+              {{
+                current.results.filter((r) =>
+                  ['completed', 'failed', 'cancelled'].includes(r.status),
+                ).length
+              }}/{{ current.request.cases.length }}
               题
             </h2>
             <p>
@@ -483,11 +985,57 @@ const tokenCount = (r: EvalResult) => {
             <button class="button" :disabled="busy || active" @click="loadConfiguration">
               载入此配置
             </button>
+            <button class="button" :disabled="active" @click="exportReport">导出验收报告</button>
+            <button class="button" :disabled="busy || active" @click="prepareRetry">
+              检查失败题重试
+            </button>
+            <button class="button" :disabled="busy || active" @click="manageRecord('archive')">
+              {{ current.archived ? '取消归档' : '归档评测' }}
+            </button>
+            <button
+              class="button danger"
+              :disabled="busy || active"
+              @click="manageRecord('delete')"
+            >
+              删除评测
+            </button>
             <button class="button" @click="exportJson">导出 JSON</button
             ><button class="button" @click="exportCsv">导出 CSV</button>
           </div>
         </div>
         <ErrorBanner :error="current.error" />
+        <div v-if="retryPlan" class="card eval-retry">
+          <h3>重试计划</h3>
+          <p>
+            复用 {{ retryPlan.reuse_count }} 题；重试
+            {{ retryPlan.retry_indices.map((i) => i + 1).join('、') || '无' }}。
+          </p>
+          <label v-if="retryPlan.unknown_indices.length"
+            ><input v-model="confirmUnknown" type="checkbox" />第
+            {{ retryPlan.unknown_indices.map((i) => i + 1).join('、') }}
+            题调用结果未知，我确认重试可能再次计费。</label
+          ><button
+            class="button"
+            :disabled="
+              busy ||
+              !retryPlan.retry_indices.length ||
+              (retryPlan.unknown_indices.length > 0 && !confirmUnknown)
+            "
+            @click="retry"
+          >
+            创建重试评测
+          </button>
+        </div>
+        <p v-if="current.request.retry_of" class="notice warning">
+          本记录关联重试自 {{ current.request.retry_of }}。复用题有来源标记，不计入本次执行用量。
+        </p>
+        <label class="field"
+          >按业务标签筛选<select v-model="tag" aria-label="评测业务标签筛选">
+            <option value="">全部案例</option>
+            <option v-for="t in availableTags" :key="t" :value="t">{{ t }}</option>
+          </select></label
+        >
+        <QualityOverview v-if="current.quality" :quality="current.quality" />
         <div class="eval-metrics">
           <div v-for="key in labels" :key="key" class="card">
             <small>{{ metricLabels[key] }}@{{ current.request.k }}</small
@@ -495,9 +1043,25 @@ const tokenCount = (r: EvalResult) => {
           </div>
         </div>
         <p class="small muted">
-          指标分母：{{ current.summary.metric_queries }} 道已执行有答案标注题（含
+          指标分母：{{ current.summary.metric_queries }} 道已执行完整有答案标注题（含
           {{ current.summary.labelled_failures }}
-          道失败计零）。未标注、应拒答和取消题不参与检索质量均值。命中率衡量是否找到至少一个相关文件，不等于答案正确率。
+          道失败计零）。部分标注
+          {{ current.summary.partial_label_queries || 0 }}
+          题；部分、未标注、应拒答和取消题不参与检索质量均值。命中率衡量是否找到至少一个相关文件，不等于答案正确率。
+        </p>
+        <p
+          v-if="
+            !current.snapshot.case_set || current.snapshot.case_set.review_status !== 'verified'
+          "
+          class="notice warning"
+        >
+          本实验未绑定人工核验案例集，当前结果仅用于调试，不能作为业务签收结论。
+        </p>
+        <p v-if="current.snapshot.case_set" class="small muted">
+          案例集 {{ current.snapshot.case_set.name }} · v{{ current.snapshot.case_set.version }} ·
+          {{ current.snapshot.case_set.split === 'acceptance' ? '验收' : '开发' }} ·
+          {{ current.snapshot.case_set.frozen ? '已冻结' : '未冻结' }} ·
+          {{ current.snapshot.case_set.review_status === 'verified' ? '人工已核验' : '草稿待核验' }}
         </p>
         <div class="eval-outcomes card">
           <span>完成 {{ current.summary.completed }}</span
@@ -511,6 +1075,14 @@ const tokenCount = (r: EvalResult) => {
             >有答案却资料不足 {{ current.summary.false_refusals }}/{{
               current.summary.answerable_total
             }}</span
+          ><span
+            >必要证据完整进入上下文 {{ current.summary.context_evidence_complete || 0 }}/{{
+              current.summary.context_evidence_queries || 0
+            }}</span
+          ><span v-if="current.request.kind === 'rag'"
+            >整体拒答成功 {{ current.summary.refusal_correct }}/{{
+              current.summary.refusal_attempted ?? current.summary.refusal_total
+            }}（含服务失败）</span
           ><span>人工已评 {{ current.summary.reviewed }}</span>
         </div>
         <section class="card eval-chart-card">
@@ -529,7 +1101,7 @@ const tokenCount = (r: EvalResult) => {
             </thead>
             <tbody>
               <tr
-                v-for="(r, i) in current.results"
+                v-for="{ result: r, index: i } in visibleResults"
                 :key="i"
                 :class="{ 'eval-selected': selectedIndex === i }"
               >
@@ -538,7 +1110,9 @@ const tokenCount = (r: EvalResult) => {
                     {{ i + 1 }}. {{ r.case.query }}
                   </button>
                 </td>
-                <td>{{ status(r.status) }}</td>
+                <td>
+                  {{ status(r.status) }}<span v-if="r.reused_from" class="badge muted">复用</span>
+                </td>
                 <td>{{ r.status === 'failed' ? '失败（计零）' : percent(r.metrics?.recall) }}</td>
                 <td>{{ r.elapsed_ms == null ? '—' : `${r.elapsed_ms} ms` }}</td>
                 <td>{{ tokenCount(r) ?? '—' }}</td>
@@ -602,6 +1176,50 @@ const tokenCount = (r: EvalResult) => {
               :sources="selected.run.sources"
               @source="source = $event"
           /></template>
+          <section v-if="selected.judgments" class="eval-judgments">
+            <h3>文件标注覆盖</h3>
+            <p>
+              已审核 {{ selected.judgments.judged }}/{{ selected.judgments.returned }} 个返回文件 ·
+              覆盖率 {{ percent(selected.judgments.coverage) }} · 已审核文件精准率
+              {{ percent(selected.judgments.judged_precision) }}
+            </p>
+            <p v-if="selected.case.judgment_scope === 'partial'" class="notice warning">
+              部分标注：未审核文件不是负样本，上述已审核精准率不能作为完整 Precision@K 发布。
+            </p>
+          </section>
+          <section v-if="selected.evidence" class="eval-evidence-coverage">
+            <h3>必要原文覆盖</h3>
+            <p class="small muted">
+              这是文件哈希绑定的原文包含检查，引用是否支持结论由人工审核。失效或无法映射的锚点不计证据覆盖分数。
+            </p>
+            <p v-if="!selected.evidence.valid" class="notice warning">
+              标注失效或未映射，请核对原文、页码、文件版本及解析结果。
+            </p>
+            <div
+              v-for="(value, stage) in selected.evidence.coverage"
+              :key="stage"
+              class="eval-coverage-row"
+            >
+              <span>{{ stages[stage] || stage }}</span
+              ><progress
+                max="1"
+                :value="value ?? undefined"
+                :aria-label="`${stages[stage]}证据覆盖率`"
+              /><strong>{{ value == null ? '未评分' : percent(value) }}</strong>
+            </div>
+            <p>
+              规则提示：{{
+                selected.evidence.causes.map((c) => causeLabels[c] || c).join('、') ||
+                '未发现证据流转丢失；回答质量仍需审核'
+              }}
+            </p>
+            <details v-for="(group, g) in selected.evidence.groups" :key="g">
+              <summary>{{ g + 1 }}. {{ group.fact }}</summary>
+              <p v-for="(a, n) in group.alternatives" :key="n">
+                {{ fileName(a.file_id) }} · {{ a.anchor_status }} · {{ a.quote }}
+              </p>
+            </details>
+          </section>
           <h3>证据流转（切片级）</h3>
           <p class="small muted">指标按文件去重，以下保留切片排名。仅检索时不会调用回答模型。</p>
           <div class="table-scroll">
@@ -644,20 +1262,55 @@ const tokenCount = (r: EvalResult) => {
             <h3>人工答案评价</h3>
             <p class="small muted">系统不把合法引用当作事实支持证明。请结合答案和原文审核。</p>
             <label class="field"
-              >评价<select v-model="verdict" aria-label="人工评价" :disabled="active">
+              >评价<select
+                v-model="dimensions.verdict"
+                aria-label="人工评价"
+                :disabled="active || busy"
+              >
                 <option value="pending">待审核</option>
                 <option value="pass">通过</option>
                 <option value="partial">部分正确</option>
                 <option value="fail">错误</option>
               </select></label
             ><textarea
-              v-model="notes"
+              v-model="dimensions.notes"
               maxlength="2000"
               rows="2"
               aria-label="评价备注"
-              :disabled="active"
+              :disabled="active || busy"
               placeholder="遗漏、无依据结论或引用问题"
-            /><button class="button" :disabled="active || busy" @click="review">保存评价</button>
+            />
+            <label v-for="field in reviewFields" :key="field.key" class="field"
+              >{{ field.label
+              }}<select
+                v-model="dimensions[field.key]"
+                :aria-label="field.label"
+                :disabled="active || busy"
+              >
+                <option v-for="(label, value) in field.options" :key="value" :value="value">
+                  {{ label }}
+                </option>
+              </select></label
+            >
+            <fieldset :disabled="active || busy">
+              <legend>人工归因（可多选）</legend>
+              <label
+                v-for="cause in [
+                  'annotation_gap',
+                  'parsing',
+                  'retrieval',
+                  'rerank',
+                  'assembly',
+                  'generation',
+                  'unknown',
+                ]"
+                :key="cause"
+                ><input v-model="dimensions.causes" type="checkbox" :value="cause" />{{
+                  causeLabels[cause]
+                }}
+              </label>
+            </fieldset>
+            <button class="button" :disabled="active || busy" @click="review">保存评价</button>
           </div>
         </section>
       </template>

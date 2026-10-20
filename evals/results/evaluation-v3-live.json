@@ -1,0 +1,189 @@
+{
+  "baseline": "6a7b089e-e1bb-4da5-833a-57a7ed783a75",
+  "deleted_experiment": "142c88e4-c330-4bf2-9760-959ddcb21e01",
+  "scope": "synthetic_two_cases_real_browser_backend_models",
+  "checks": [
+    "real_browser_create_version",
+    "real_rag_answer_refusal",
+    "multi_fact_context",
+    "isolated_budget_override",
+    "pending_review_persistence",
+    "paired_comparison",
+    "report_downloads",
+    "archive_delete",
+    "responsive_layout",
+    "workspace_unchanged",
+    "restart_persistence"
+  ],
+  "results": [
+    {
+      "evaluation_id": "6a7b089e-e1bb-4da5-833a-57a7ed783a75",
+      "options": {
+        "rerank": "off",
+        "context_tokens": 512
+      },
+      "statuses": [
+        "answered",
+        "insufficient_evidence"
+      ],
+      "summary": {
+        "k": 5,
+        "metrics": {
+          "precision": 0.2,
+          "recall": 1,
+          "hit": 1,
+          "mrr": 1,
+          "ndcg": 1
+        },
+        "metric_queries": 1,
+        "labelled_failures": 0,
+        "completed": 2,
+        "failed": 0,
+        "cancelled": 0,
+        "refusal_correct": 1,
+        "refusal_total": 1,
+        "false_refusals": 0,
+        "answerable_total": 1,
+        "partial_label_queries": 0,
+        "refusal_attempted": 1,
+        "answerable_attempted": 1,
+        "context_evidence_queries": 1,
+        "context_evidence_complete": 1,
+        "reviewed": 0,
+        "curves": [
+          {
+            "k": 1,
+            "precision": 1,
+            "recall": 1,
+            "hit": 1,
+            "mrr": 1,
+            "ndcg": 1
+          },
+          {
+            "k": 3,
+            "precision": 0.3333333333333333,
+            "recall": 1,
+            "hit": 1,
+            "mrr": 1,
+            "ndcg": 1
+          },
+          {
+            "k": 5,
+            "precision": 0.2,
+            "recall": 1,
+            "hit": 1,
+            "mrr": 1,
+            "ndcg": 1
+          },
+          {
+            "k": 10,
+            "precision": 0.1,
+            "recall": 1,
+            "hit": 1,
+            "mrr": 1,
+            "ndcg": 1
+          },
+          {
+            "k": 20,
+            "precision": 0.05,
+            "recall": 1,
+            "hit": 1,
+            "mrr": 1,
+            "ndcg": 1
+          }
+        ]
+      },
+      "usage": {
+        "known_tokens": 461,
+        "known_queries": 2,
+        "unknown_queries": 0,
+        "new_model_calls": 1
+      }
+    },
+    {
+      "evaluation_id": "142c88e4-c330-4bf2-9760-959ddcb21e01",
+      "options": {
+        "rerank": "off",
+        "context_tokens": 1024
+      },
+      "statuses": [
+        "answered",
+        "insufficient_evidence"
+      ],
+      "summary": {
+        "k": 5,
+        "metrics": {
+          "precision": 0.2,
+          "recall": 1,
+          "hit": 1,
+          "mrr": 1,
+          "ndcg": 1
+        },
+        "metric_queries": 1,
+        "labelled_failures": 0,
+        "completed": 2,
+        "failed": 0,
+        "cancelled": 0,
+        "refusal_correct": 1,
+        "refusal_total": 1,
+        "false_refusals": 0,
+        "answerable_total": 1,
+        "partial_label_queries": 0,
+        "refusal_attempted": 1,
+        "answerable_attempted": 1,
+        "context_evidence_queries": 1,
+        "context_evidence_complete": 1,
+        "reviewed": 0,
+        "curves": [
+          {
+            "k": 1,
+            "precision": 1,
+            "recall": 1,
+            "hit": 1,
+            "mrr": 1,
+            "ndcg": 1
+          },
+          {
+            "k": 3,
+            "precision": 0.3333333333333333,
+            "recall": 1,
+            "hit": 1,
+            "mrr": 1,
+            "ndcg": 1
+          },
+          {
+            "k": 5,
+            "precision": 0.2,
+            "recall": 1,
+            "hit": 1,
+            "mrr": 1,
+            "ndcg": 1
+          },
+          {
+            "k": 10,
+            "precision": 0.1,
+            "recall": 1,
+            "hit": 1,
+            "mrr": 1,
+            "ndcg": 1
+          },
+          {
+            "k": 20,
+            "precision": 0.05,
+            "recall": 1,
+            "hit": 1,
+            "mrr": 1,
+            "ndcg": 1
+          }
+        ]
+      },
+      "usage": {
+        "known_tokens": 467,
+        "known_queries": 2,
+        "unknown_queries": 0,
+        "new_model_calls": 1
+      }
+    }
+  ],
+  "temporary_schema_cleaned": true
+}

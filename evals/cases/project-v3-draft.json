@@ -1,0 +1,420 @@
+{
+  "name": "项目文档案例草稿",
+  "review_status": "draft",
+  "frozen": false,
+  "notice": "30 道真实项目文档出处的待核验案例，不是用户业务标注或生产签收标准。",
+  "sources": [
+    {
+      "path": "docs/daily-management.md",
+      "content_hash": "b83d48e7f464bfccfa5772771c9e68ec28def5cd5ed5b7090e339bcfcf1c6c5f"
+    },
+    {
+      "path": "docs/structured-answer-v2.md",
+      "content_hash": "abadbcbede19c670f1ffed2793d4e9dde580983c84ce98790ca4029ae79eccc3"
+    },
+    {
+      "path": "docs/context-assembly-v1.md",
+      "content_hash": "8bd902791cf8482b3814443a3daed6a21c5cb4facf00a34df2882a31e7aacede"
+    },
+    {
+      "path": "docs/evaluation-v3.md",
+      "content_hash": "bdc3b55cbd9c2a4eb1cdc4e35edb36139535977a92d8d05b58dc591eb77dc5a4"
+    },
+    {
+      "path": "docs/model-settings.md",
+      "content_hash": "2dd9ae9f2917df0ef209723b71c4fd6be5504c646941f11d6e7df74c3e01af57"
+    }
+  ],
+  "cases": [
+    {
+      "query": "下载文件会在浏览器中直接解释吗？",
+      "source": "docs/daily-management.md",
+      "quote": "禁止浏览器内联解释",
+      "split": "development",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "management"
+      ]
+    },
+    {
+      "query": "删除资料后历史答案和来源还在吗？",
+      "source": "docs/daily-management.md",
+      "quote": "历史回答及其来源快照保留",
+      "split": "development",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "management"
+      ]
+    },
+    {
+      "query": "上传队列会并行上传文件吗？",
+      "source": "docs/daily-management.md",
+      "quote": "上传队列串行执行",
+      "split": "development",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "management"
+      ]
+    },
+    {
+      "query": "上传残留清理会删除刚写入的文件吗？",
+      "source": "docs/daily-management.md",
+      "quote": "超过 24 小时的普通文件",
+      "split": "development",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "management"
+      ]
+    },
+    {
+      "query": "上传残留会在什么时候自动清理？",
+      "source": "docs/daily-management.md",
+      "quote": "服务启动时也执行一次",
+      "split": "development",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "management"
+      ]
+    },
+    {
+      "query": "问答文件范围为空会回退全库吗？",
+      "source": "docs/daily-management.md",
+      "quote": "范围为空，不会回退全库",
+      "split": "development",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "management"
+      ]
+    },
+    {
+      "query": "知识库回答会展示模型原始草稿吗？",
+      "source": "docs/structured-answer-v2.md",
+      "quote": "不展示模型原始 JSON 或修复前草稿",
+      "split": "development",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "answer_protocol"
+      ]
+    },
+    {
+      "query": "一个回答段落可以引用多少个来源？",
+      "source": "docs/structured-answer-v2.md",
+      "quote": "source_ids 每段 1–20 项",
+      "split": "development",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "answer_protocol"
+      ]
+    },
+    {
+      "query": "回答格式不合法最多修复几次？",
+      "source": "docs/structured-answer-v2.md",
+      "quote": "最多一次修复模型调用",
+      "split": "development",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "answer_protocol"
+      ]
+    },
+    {
+      "query": "修复回答时会重新检索资料吗？",
+      "source": "docs/structured-answer-v2.md",
+      "quote": "不重查资料、不修改来源集合",
+      "split": "development",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "answer_protocol"
+      ]
+    },
+    {
+      "query": "回答能引用已经裁掉的候选吗？",
+      "source": "docs/structured-answer-v2.md",
+      "quote": "不能引用已裁掉的候选或不存在的编号",
+      "split": "development",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "answer_protocol"
+      ]
+    },
+    {
+      "query": "协议错误会静默改成资料不足吗？",
+      "source": "docs/structured-answer-v2.md",
+      "quote": "不能自动降级为资料不足",
+      "split": "development",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "answer_protocol"
+      ]
+    },
+    {
+      "query": "邻居补全最多使用多少资料预算？",
+      "source": "docs/context-assembly-v1.md",
+      "quote": "邻居最多消耗资料预算的 20%",
+      "split": "development",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "context"
+      ]
+    },
+    {
+      "query": "重叠去重会模糊删除数字或缩进吗？",
+      "source": "docs/context-assembly-v1.md",
+      "quote": "不模糊删除数字、标点或缩进",
+      "split": "development",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "context"
+      ]
+    },
+    {
+      "query": "表格和代码会为了预算被随意切断吗？",
+      "source": "docs/context-assembly-v1.md",
+      "quote": "表格、列表和代码保持完整块",
+      "split": "development",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "context"
+      ]
+    },
+    {
+      "query": "资料与问题通过什么格式进入最终消息？",
+      "source": "docs/context-assembly-v1.md",
+      "quote": "通过 JSON 序列化承载 evidence 和原始 question",
+      "split": "development",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "context"
+      ]
+    },
+    {
+      "query": "失败恢复会使用最新资料重新组装吗？",
+      "source": "docs/context-assembly-v1.md",
+      "quote": "不按最新知识库内容重新组装",
+      "split": "development",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "context"
+      ]
+    },
+    {
+      "query": "完整请求超预算时先丢历史还是资料？",
+      "source": "docs/context-assembly-v1.md",
+      "quote": "必要时先去除最旧历史、再收缩资料",
+      "split": "development",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "context"
+      ]
+    },
+    {
+      "query": "部分标注题能进入完整检索质量均值吗？",
+      "source": "docs/evaluation-v3.md",
+      "quote": "完整正相关案例才参与五项质量均值",
+      "split": "acceptance",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "evaluation"
+      ]
+    },
+    {
+      "query": "检索精准率的分母是实际返回数量吗？",
+      "source": "docs/evaluation-v3.md",
+      "quote": "文件去重、固定 K 分母、完整标注失败题计零",
+      "split": "acceptance",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "evaluation"
+      ]
+    },
+    {
+      "query": "部分标注可以证明资料里不存在答案吗？",
+      "source": "docs/evaluation-v3.md",
+      "quote": "部分标注不能证明资料中不存在答案",
+      "split": "acceptance",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "evaluation"
+      ]
+    },
+    {
+      "query": "某一组必要证据无法映射时会给覆盖率零分吗？",
+      "source": "docs/evaluation-v3.md",
+      "quote": "整题证据覆盖不评分",
+      "split": "acceptance",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "evaluation"
+      ]
+    },
+    {
+      "query": "文件命中率等于回答事实正确率吗？",
+      "source": "docs/evaluation-v3.md",
+      "quote": "文件级命中分开",
+      "split": "acceptance",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "evaluation"
+      ]
+    },
+    {
+      "query": "评测原文包含检查是语义事实验证吗？",
+      "source": "docs/evaluation-v3.md",
+      "quote": "不是语义事实验证",
+      "split": "acceptance",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "evaluation"
+      ]
+    },
+    {
+      "query": "模型设置保存时会请求远端模型吗？",
+      "source": "docs/model-settings.md",
+      "quote": "保存不发送外部请求，也不自动重建索引",
+      "split": "acceptance",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "settings"
+      ]
+    },
+    {
+      "query": "API Key 留空会清空密钥吗？",
+      "source": "docs/model-settings.md",
+      "quote": "API Key 留空或省略时保留该模型现有密钥",
+      "split": "acceptance",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "settings"
+      ]
+    },
+    {
+      "query": "恢复一个模型的环境配置会影响另一个模型吗？",
+      "source": "docs/model-settings.md",
+      "quote": "另一类模型保持不变",
+      "split": "acceptance",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "settings"
+      ]
+    },
+    {
+      "query": "模型配置覆盖保存在什么位置？",
+      "source": "docs/model-settings.md",
+      "quote": "配置覆盖保存在 PostgreSQL 的 model_settings 表中",
+      "split": "acceptance",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "settings"
+      ]
+    },
+    {
+      "query": "模型配置接口会返回 API Key 吗？",
+      "source": "docs/model-settings.md",
+      "quote": "不回传密钥",
+      "split": "acceptance",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "settings"
+      ]
+    },
+    {
+      "query": "只轮换 API Key 会改变向量索引版本吗？",
+      "source": "docs/model-settings.md",
+      "quote": "只轮换 API Key 且其他字段不变不会改变向量索引版本",
+      "split": "acceptance",
+      "judgment_scope": "partial",
+      "expected": "answerable",
+      "tags": [
+        "project-docs",
+        "review-pending",
+        "settings"
+      ]
+    }
+  ]
+}

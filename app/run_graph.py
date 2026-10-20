@@ -39,6 +39,7 @@ class RunState(TypedDict, total=False):
     retrieval_mode: str
     file_ids: list[str] | None
     retrieval_done: bool
+    evaluation_options: dict
     capture_trace: bool
     rag_history: list[AnyMessage]
     history_scope_dropped: int
@@ -131,6 +132,11 @@ def build_run_graph(runtime, repository):
                 file_ids=state.get("file_ids"),
             ),
             **({"capture_trace": True} if state.get("capture_trace") else {}),
+            **(
+                {"rerank": state["evaluation_options"]["rerank"] == "on"}
+                if state.get("evaluation_options", {}).get("rerank", "inherit") != "inherit"
+                else {}
+            ),
         )
 
         return {
@@ -156,8 +162,14 @@ def build_run_graph(runtime, repository):
         started = time.perf_counter()
         with runtime.metrics.span("context_assembly"):
             reserve = repair_reserve(runtime.counter)
+            context_tokens = state.get("evaluation_options", {}).get("context_tokens")
+            assembly_settings = (
+                settings.model_copy(update={"rag_context_tokens": context_tokens})
+                if context_tokens is not None
+                else settings
+            )
             result = ContextAssembler(
-                settings, runtime.counter, runtime.input_budget - reserve
+                assembly_settings, runtime.counter, runtime.input_budget - reserve
             ).assemble(
                 state["messages"][-1].text,
                 state["retrieved_sources"],
