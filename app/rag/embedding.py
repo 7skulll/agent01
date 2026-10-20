@@ -110,7 +110,8 @@ class OpenAIEmbeddingModel:
             ):
                 raise EmbeddingError("Embedding 输入超过 token 预算，请缩短问题或重新切片。")
         vectors: list[list[float]] = []
-        batch, total = [], 0
+        batch: list[str] = []
+        total = 0
         for text, count in zip(cleaned, counts):
             if batch and (
                 len(batch) >= self.batch_size
@@ -160,6 +161,7 @@ class OpenAIEmbeddingModel:
             )
             if delay > 0:
                 await asyncio.sleep(delay)
+        assert last is not None
         raise last  # pragma: no cover - 循环必然返回或抛出
 
     def _validate(self, vectors: list[list[float]], expected: int) -> None:

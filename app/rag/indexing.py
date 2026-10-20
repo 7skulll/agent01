@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
 from uuid import uuid4
 
 from pydantic import BaseModel
 
+from app.clock import utc_now
 from app.config import Settings
 from app.errors import ChatError
 from app.knowledge_bases import require_knowledge_base
@@ -88,12 +88,11 @@ class IndexRepository:
     async def counts(self, file_ids: list[str]) -> dict[str, int]:
         if not file_ids:
             return {}
-        placeholders = ",".join("%s" for _ in file_ids)
         async with self.database.read():
             cursor = await self.database.connection.execute(
-                f"SELECT file_id, COUNT(*) AS count FROM chunks "
-                f"WHERE file_id IN ({placeholders}) GROUP BY file_id",
-                tuple(file_ids),
+                "SELECT file_id, COUNT(*) AS count FROM chunks "
+                "WHERE file_id=ANY(%s) GROUP BY file_id",
+                (file_ids,),
             )
             return {row["file_id"]: row["count"] for row in await cursor.fetchall()}
 
@@ -262,7 +261,7 @@ class IndexService:
             await self._fail(file_id, "文件解析失败。")
             return
 
-        now = datetime.now(timezone.utc).isoformat()
+        timestamp = utc_now()
         records = [
             ChunkRecord(
                 chunk_id=str(uuid4()),
@@ -276,7 +275,7 @@ class IndexService:
                 kind=chunk.kind,
                 page=chunk.page,
                 order=chunk.order,
-                created_at=now,
+                created_at=timestamp,
             )
             for index, chunk in enumerate(chunks)
         ]

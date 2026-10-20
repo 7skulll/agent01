@@ -1,8 +1,10 @@
 import asyncio
 from uuid import uuid4
 
+import pytest
 from test_evaluations import BASE, finish, run_body
 from test_evaluations import client as client
+from test_knowledge_bases import create as create_kb
 from test_knowledge_bases import index, upload
 
 from app.errors import ChatError
@@ -262,3 +264,43 @@ def test_retry_seeds_are_durable_even_when_worker_never_starts(client, monkeypat
     stopped = client.post(BASE + "/" + child["evaluation_id"] + "/stop").json()
     assert stopped["results"][1]["reused_from"] == parent["evaluation_id"]
     assert stopped["results"][0]["status"] == "pending"
+
+
+@pytest.mark.parametrize("status", ["paused", "recovering"])
+def test_stalled_run_status_fails_case_instead_of_blocking_evaluation(client, monkeypatch, status):
+    file = upload(client, "default")
+    index(client, "default")
+
+    async def stalled(*args, **kwargs):
+        return {"status": status}
+
+    monkeypatch.setattr(client.app.state.run_service, "inspect", stalled)
+    report = finish(client, client.post(BASE, json=run_body(file["file_id"], kind="rag")))
+    assert report["status"] == "completed"
+    result = report["results"][0]
+    assert result["status"] == "failed"
+    assert result["error"]["code"] == "evaluation_run_stalled"
+    assert client.app.state.evaluations.tasks == {}
+
+
+def test_create_rechecks_knowledge_base_after_snapshot(client, monkeypatch):
+    kb_id = create_kb(client, "竞态库")
+    service = client.app.state.evaluations
+    original = service.snapshot
+    deleted = []
+
+    async def snapshot_then_delete(body):
+        result = await original(body)
+        if not deleted:
+            deleted.append(True)
+            await client.app.state.knowledge_base_service.delete(body.knowledge_base_id)
+        return result
+
+    monkeypatch.setattr(service, "snapshot", snapshot_then_delete)
+    response = client.post(
+        BASE,
+        json=run_body(None, knowledge_base_id=kb_id, cases=[{"query": "任意问题"}]),
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "knowledge_base_not_found"
+    assert client.portal.call(service.history, kb_id, False, 20, 0)["total"] == 0

@@ -100,11 +100,10 @@ class _HeadingPath:
     def __init__(self) -> None:
         self._stack: list[tuple[int, str]] = []
 
-    def push(self, level: int, title: str) -> str:
+    def push(self, level: int, title: str) -> None:
         level = max(level, 1)
         self._stack = [item for item in self._stack if item[0] < level]
         self._stack.append((level, title))
-        return self.path
 
     @property
     def path(self) -> str | None:

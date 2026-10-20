@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "Enterprise RAG"
+    # Empty disables the shared-token gate; set RAG_API_TOKEN to enable it.
+    api_token: SecretStr = SecretStr("")
     llm_provider: Literal["deepseek", "openai"] = "deepseek"
     llm_model: str = ""
     llm_base_url: str = ""

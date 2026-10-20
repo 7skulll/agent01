@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { metricLabels, type Scores } from './types'
+import { percent } from './format'
 const props = defineProps<{ curves: (Scores & { k: number })[] }>()
 const colors = { precision: '#24745d', recall: '#0c927e', hit: '#b66920' }
 const keys = ['precision', 'recall', 'hit'] as const
@@ -38,7 +39,7 @@ const labelled = computed(() => props.curves.some((r) => r.recall !== null))
           r="4"
           :fill="colors[key]"
         >
-          <title>{{ metricLabels[key] }}@{{ r.k }}：{{ ((r[key] || 0) * 100).toFixed(1) }}%</title>
+          <title>{{ metricLabels[key] }}@{{ r.k }}：{{ percent(r[key], '未标注') }}</title>
         </circle>
       </g>
       <text
@@ -74,7 +75,7 @@ const labelled = computed(() => props.curves.some((r) => r.recall !== null))
           <tr v-for="r in curves" :key="r.k">
             <td>{{ r.k }}</td>
             <td v-for="key in keys" :key="key">
-              {{ r[key] === null ? '未标注' : `${((r[key] || 0) * 100).toFixed(1)}%` }}
+              {{ percent(r[key], '未标注') }}
             </td>
           </tr>
         </tbody>

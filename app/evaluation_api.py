@@ -10,7 +10,6 @@ from app.errors import ChatError
 from app.evaluation_comparison import compare
 from app.evaluation_models import ArchiveRequest, CaseSetRequest, EvalRequest, RetryRequest, Review
 from app.evaluation_quality import markdown_report
-from app.knowledge_bases import require_knowledge_base
 
 router = APIRouter(prefix="/api/v1/evaluations", tags=["evaluations"])
 
@@ -55,16 +54,7 @@ async def save_case_set(body: CaseSetRequest, request: Request):
 
 @router.get("/case-sets")
 async def list_case_sets(request: Request, knowledge_base_id: str):
-    service = request.app.state.evaluations
-    async with service.database.read():
-        cur = await service.database.connection.execute(
-            "SELECT case_set_id,name,version,tags,created_at,fingerprint,"
-            "split,review_status,frozen "
-            "FROM evaluation_case_sets "
-            "WHERE kb_id=%s ORDER BY created_at DESC LIMIT 100",
-            (knowledge_base_id,),
-        )
-        return await cur.fetchall()
+    return await request.app.state.evaluations.case_sets(knowledge_base_id)
 
 
 @router.get("/case-sets/{case_set_id}")
@@ -74,14 +64,7 @@ async def get_case_set(case_set_id: UUID, request: Request):
 
 @router.get("/corpus")
 async def evaluation_corpus(request: Request, knowledge_base_id: str):
-    service = request.app.state.evaluations
-    await require_knowledge_base(service.database, knowledge_base_id)
-    async with service.database.read():
-        cur = await service.database.connection.execute(
-            "SELECT file_id,name,content_hash FROM files WHERE kb_id=%s ORDER BY file_id",
-            (knowledge_base_id,),
-        )
-        return await cur.fetchall()
+    return await request.app.state.evaluations.corpus_files(knowledge_base_id)
 
 
 @router.get("/compare")

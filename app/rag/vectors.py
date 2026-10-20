@@ -6,10 +6,10 @@ import json
 import logging
 import math
 import time
-from datetime import datetime, timezone
 
 from psycopg import sql
 
+from app.clock import utc_now
 from app.errors import ChatError
 from app.observability import Metrics
 from app.rag.chunking import chunk_version
@@ -210,7 +210,7 @@ class VectorService:
                     result = await self.model.embed_documents(batch)
                 dimension = validate_vectors(result, len(batch), dimension)
                 vectors.extend(result)
-            timestamp = datetime.now(timezone.utc).isoformat()
+            timestamp = utc_now()
             async with self.files.database.transaction():
                 connection = self.files.database.connection
                 # 防止外部调用期间切片被重新解析；本服务仅支持单 worker。

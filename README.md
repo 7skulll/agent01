@@ -96,6 +96,7 @@ npm run dev
 | `RAG_CONTEXT_TOKENS` / `RAG_INPUT_TOKENS` | 资料预算、总输入及输出预留预算（估算 token） | `2048` / `8192` |
 | `RAG_DATABASE_URL` | PostgreSQL 连接字符串 | 见 `.env.example` |
 | `RAG_DATABASE_POOL_SIZE` | 业务连接池上限 | `10` |
+| `RAG_API_TOKEN` | 可选共享访问令牌；设置后 `/api/v1` 需 Bearer，`health` 除外 | 空（关闭） |
 | `RAG_FILE_STORAGE_PATH` | 本地对象存储根目录 | `data/files` |
 | `RAG_CHUNK_SIZE_TOKENS` / `RAG_CHUNK_OVERLAP_TOKENS` | 切片大小与重叠（配置的 tokenizer 单位） | `512` / `64` |
 

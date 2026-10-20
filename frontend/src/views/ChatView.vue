@@ -24,6 +24,7 @@ import {
 import { api, date } from '../api/client'
 import {
   modeLabels,
+  modeOptions as retrievalOptions,
   activeStatuses,
   openStatuses,
   type Mode,
@@ -171,11 +172,6 @@ watch(historyCollapsed, (collapsed) =>
 )
 onMounted(() => historyMedia.addEventListener('change', updateHistoryLayout))
 onBeforeUnmount(() => historyMedia.removeEventListener('change', updateHistoryLayout))
-const retrievalOptions: { value: Mode; label: string; description: string }[] = [
-  { value: 'hybrid', label: '混合检索', description: '结合语义与关键词，适合大多数问题' },
-  { value: 'keyword', label: '全文检索', description: '按关键词查找名称、编号与具体条款' },
-  { value: 'vector', label: '向量检索', description: '按语义查找相关内容与相近表达' },
-]
 const allTurns = computed(() =>
   (turns.data.value?.pages.flatMap((page) => page.items) || [])
     .filter((r, i, arr) => arr.findIndex((t) => t.run_id === r.run_id) === i)

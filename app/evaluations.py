@@ -6,12 +6,12 @@ import json
 import logging
 import time
 from copy import deepcopy
-from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
 from psycopg.types.json import Jsonb
 
+from app.clock import utc_now
 from app.errors import ChatError
 from app.evaluation_evidence import evidence_report
 from app.evaluation_metrics import case_metrics, judgment_coverage, summarize
@@ -25,10 +25,6 @@ from app.schemas import RunRequest
 logger = logging.getLogger(__name__)
 
 
-def timestamp():
-    return datetime.now(timezone.utc).isoformat()
-
-
 def digest(value):
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, ensure_ascii=False, default=str).encode()
@@ -36,6 +32,10 @@ def digest(value):
 
 
 class EvaluationService:
+    # The run graph owns its own timeout; this grace period only covers DB polling
+    # and settlement, so a stalled run cannot block the global evaluation queue.
+    RUN_STALL_GRACE_SECONDS = 30
+
     def __init__(self, app, database):
         self.app, self.database = app, database
         self.lock = asyncio.Lock()
@@ -86,7 +86,7 @@ class EvaluationService:
         return row
 
     async def update(self, evaluation_id, **fields):
-        fields["updated_at"] = timestamp()
+        fields["updated_at"] = utc_now()
         values = [
             Jsonb(v)
             if key in ("results", "error", "owned_conversation_ids") and v is not None
@@ -136,7 +136,15 @@ class EvaluationService:
             key: value
             for key, value in settings.model_dump(mode="json").items()
             if not any(
-                word in key for word in ("api_key", "database_url", "storage_path", "base_url")
+                word in key
+                for word in (
+                    "api_key",
+                    "database_url",
+                    "storage_path",
+                    "base_url",
+                    "token",
+                    "secret",
+                )
             )
         }
         for key in ("llm_base_url", "embedding_base_url", "rerank_base_url"):
@@ -259,8 +267,11 @@ class EvaluationService:
                 }
             initial_results = self.retry_results(body, seeds) if body.retry_of else []
             evaluation_id = str(uuid4())
-            now = timestamp()
+            timestamp = utc_now()
             async with self.database.transaction():
+                # Re-check under a row lock: the snapshot above is lock-free, so the
+                # knowledge base may have been deleted while it was being built.
+                await require_knowledge_base(self.database, body.knowledge_base_id, lock=True)
                 await self.database.connection.execute(
                     "INSERT INTO evaluations(evaluation_id,idempotency_key,created_at,updated_at,"
                     "status,request,snapshot,results) "
@@ -268,8 +279,8 @@ class EvaluationService:
                     (
                         evaluation_id,
                         str(body.idempotency_key),
-                        now,
-                        now,
+                        timestamp,
+                        timestamp,
                         Jsonb(request),
                         Jsonb(snapshot),
                         Jsonb(initial_results),
@@ -373,12 +384,34 @@ class EvaluationService:
                         active_run = await self.start_run(evaluation_id, body, case)
                         result["run_id"] = active_run
                         await self.update(evaluation_id, results=results)
+                        deadline = (
+                            started
+                            + self.app.state.runtime.settings.agent_timeout_seconds
+                            + self.RUN_STALL_GRACE_SECONDS
+                        )
                         while True:
                             if (await self.control(evaluation_id))["stop_requested"]:
                                 await self.app.state.run_service.cancel(active_run)
                             run_row = await self.app.state.run_service.inspect(active_run)
-                            if run_row["status"] in ("completed", "failed", "cancelled"):
+                            run_status = run_row["status"]
+                            if run_status in ("completed", "failed", "cancelled"):
                                 break
+                            # A paused/recovering run has no worker that can advance it.
+                            # Fail the case instead of occupying the single evaluation slot.
+                            if run_status in ("paused", "recovering"):
+                                raise ChatError(
+                                    "evaluation_run_stalled",
+                                    "评测任务已暂停或中断，本题已终止，请重试。",
+                                    504,
+                                    True,
+                                )
+                            if time.perf_counter() >= deadline:
+                                raise ChatError(
+                                    "evaluation_run_timeout",
+                                    "评测任务超过执行时间上限，本题已终止，请重试。",
+                                    504,
+                                    True,
+                                )
                             await asyncio.sleep(0.15)
                         final = self.app.state.run_service.repository.response(run_row).model_dump(
                             mode="json"
@@ -505,6 +538,26 @@ class EvaluationService:
                     await self.update(evaluation_id, status="stopped", results=latest["results"])
             return await self.row(evaluation_id)
 
+    async def case_sets(self, kb_id):
+        async with self.database.read():
+            cur = await self.database.connection.execute(
+                "SELECT case_set_id,name,version,tags,created_at,fingerprint,"
+                "split,review_status,frozen "
+                "FROM evaluation_case_sets "
+                "WHERE kb_id=%s ORDER BY created_at DESC LIMIT 100",
+                (kb_id,),
+            )
+            return await cur.fetchall()
+
+    async def corpus_files(self, kb_id):
+        await require_knowledge_base(self.database, kb_id)
+        async with self.database.read():
+            cur = await self.database.connection.execute(
+                "SELECT file_id,name,content_hash FROM files WHERE kb_id=%s ORDER BY file_id",
+                (kb_id,),
+            )
+            return await cur.fetchall()
+
     async def case_set(self, case_set_id):
         async with self.database.read():
             cur = await self.database.connection.execute(
@@ -584,7 +637,7 @@ class EvaluationService:
                         Jsonb(cases),
                         Jsonb(corpus),
                         fingerprint,
-                        timestamp(),
+                        utc_now(),
                         body.split,
                         body.review_status,
                         body.frozen,

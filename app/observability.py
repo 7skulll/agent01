@@ -7,9 +7,10 @@ import math
 import threading
 import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
 from functools import wraps
 from uuid import uuid4
+
+from app.clock import utc_now
 
 logger = logging.getLogger(__name__)
 BOUNDS_MS = (10, 50, 100, 250, 500, 1000, 2500, 5000, 10000)
@@ -17,7 +18,7 @@ BOUNDS_MS = (10, 50, 100, 250, 500, 1000, 2500, 5000, 10000)
 
 class Metrics:
     def __init__(self):
-        self.started_at = datetime.now(timezone.utc).isoformat()
+        self.started_at = utc_now()
         self.started = time.monotonic()
         self.lock = threading.Lock()
         self.counters = {}

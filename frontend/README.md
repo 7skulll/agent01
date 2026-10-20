@@ -24,6 +24,8 @@ npm run dev
 
 前端默认同源访问 API；独立域名部署时可以复制 `.env.example` 为 `.env.local` 并设置 `VITE_API_BASE`，同时设置后端 CORS。所有 `VITE_` 变量都对浏览器可见，不能放入模型密钥。
 
+如果后端设置了 `RAG_API_TOKEN`，前端需在 `.env.local` 设置相同的 `VITE_API_TOKEN`，所有请求会携带 `Authorization: Bearer`。这是单工作区部署门禁，不是用户级权限模型。
+
 ## 演示流程
 
 1. 在右上角选择知识库，或点击“+”新建。可删除不用的库，删除会清理原文件与索引并保留历史问答；有未结束任务时需先完成或取消。

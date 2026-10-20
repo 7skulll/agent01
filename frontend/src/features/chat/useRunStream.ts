@@ -1,5 +1,5 @@
 import { onScopeDispose, ref, shallowRef, triggerRef } from 'vue'
-import { api, base, readError, ApiError } from '../../api/client'
+import { api, authHeaders, base, readError, ApiError } from '../../api/client'
 import { initialStream, reduceEvent, SSEParser } from './stream'
 export function useRunStream(onSync: () => Promise<unknown>) {
   const state = shallowRef(initialStream(''))
@@ -21,6 +21,7 @@ export function useRunStream(onSync: () => Promise<unknown>) {
       let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
       try {
         const response = await fetch(`${base}/runs/${runId}/events?after=${state.value.seq}`, {
+          headers: authHeaders,
           signal: own.signal,
         })
         if (!response.ok) throw await readError(response)

@@ -290,19 +290,10 @@ def _join(pieces: list[str]) -> str:
     return "".join(pieces)
 
 
-def _merge(pieces: list[str], size: int, overlap: int, counter=DEFAULT_COUNTER) -> list[str]:
-    """把递归切出的片段合并成块：分组 -> 消除尾块 -> 加预留重叠前缀。"""
-    overlap = max(0, min(overlap, size - 1))
-    # 分组时预留重叠预算，保证前缀 + 主体 <= size。
-    core_target = max(1, size - overlap)
-    groups = _rebalance_tail(_greedy_groups(pieces, core_target, counter), core_target, counter)
-    texts = [joined for joined in (_join(group) for group in groups) if joined]
-    return _apply_overlap(texts, size, overlap, counter)
-
-
 def _greedy_groups(pieces, cap: int, counter=DEFAULT_COUNTER, max_groups=None) -> list[list[str]]:
     """直接编码拼接后的正文，不假定 BPE token 数可以逐段相加。"""
-    groups, current = [], []
+    groups: list[list[str]] = []
+    current: list[str] = []
     for piece in pieces:
         if current and counter.count("".join([*current, piece])) > cap:
             groups.append(current)

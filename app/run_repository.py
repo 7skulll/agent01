@@ -1,9 +1,9 @@
 import json
-from datetime import datetime, timezone
 from uuid import uuid4
 
 from psycopg.types.json import Jsonb
 
+from app.clock import utc_now
 from app.conversations import ConversationRepository
 from app.errors import ChatError
 from app.knowledge_bases import require_knowledge_base
@@ -19,10 +19,6 @@ _ELAPSED_ROLLOVER = (
     "(clock_timestamp()-execution_started_at::timestamptz))) ELSE 0 END, "
     "execution_started_at=NULL"
 )
-
-
-def now():
-    return datetime.now(timezone.utc).isoformat()
 
 
 class RunRepository:
@@ -139,7 +135,7 @@ class RunRepository:
             "INSERT INTO run_events VALUES (%s, %s, %s, %s)",
             (row["run_id"], seq, event, json.dumps(payload, ensure_ascii=False)),
         )
-        timestamp = now()
+        timestamp = utc_now()
         await self.connection.execute(
             "UPDATE runs SET event_seq=%s, updated_at=%s WHERE run_id=%s",
             (seq, timestamp, row["run_id"]),
@@ -228,7 +224,7 @@ class RunRepository:
             )
             if not cursor.rowcount:
                 raise ChatError("conversation_busy", "会话已有未结束的任务。", 409, True)
-            timestamp = now()
+            timestamp = utc_now()
             await self.connection.execute(
                 "INSERT INTO runs (run_id, conversation_id, request_id, idempotency_key, "
                 "message, base_run_id, graph_version, status, created_at, updated_at, "
@@ -258,12 +254,14 @@ class RunRepository:
             return row, True
 
     async def set_running(self, run_id):
+        """Atomically claim a queued run; False means another state already won."""
         async with self.transaction():
-            await self.connection.execute(
+            cursor = await self.connection.execute(
                 "UPDATE runs SET status='running', updated_at=%s, execution_started_at=%s "
                 "WHERE run_id=%s AND status='queued'",
-                (now(), now(), run_id),
+                (utc_now(), utc_now(), run_id),
             )
+            return cursor.rowcount > 0
 
     async def mark_recovering(self, run_id):
         async with self.transaction():
@@ -272,7 +270,7 @@ class RunRepository:
                 await self.connection.execute(
                     f"UPDATE runs SET status='recovering', updated_at=%s, {_ELAPSED_ROLLOVER} "
                     "WHERE run_id=%s",
-                    (now(), run_id),
+                    (utc_now(), run_id),
                 )
                 await self._event(row, "recovery_required", {"status": "recovering"})
 
@@ -283,7 +281,7 @@ class RunRepository:
                 return row
             if row["status"] not in ("queued", "running"):
                 raise ChatError("run_not_running", "只有执行中的任务可以请求暂停。", 409)
-            timestamp = now()
+            timestamp = utc_now()
             await self.connection.execute(
                 "UPDATE runs SET pause_requested=1, updated_at=%s WHERE run_id=%s",
                 (timestamp, run_id),
@@ -295,7 +293,8 @@ class RunRepository:
         async with self.transaction():
             row = await self._row(run_id)
             await self.connection.execute(
-                "UPDATE runs SET status='paused', updated_at=%s WHERE run_id=%s", (now(), run_id)
+                "UPDATE runs SET status='paused', updated_at=%s WHERE run_id=%s",
+                (utc_now(), run_id),
             )
             await self._event(row, "paused", {"status": "paused"})
 
@@ -349,7 +348,7 @@ class RunRepository:
             await self.connection.execute(
                 "UPDATE runs SET status='queued', pause_requested=0, "
                 "error=NULL, updated_at=%s WHERE run_id=%s",
-                (now(), run_id),
+                (utc_now(), run_id),
             )
             row.update(status="queued", pause_requested=0, error=None)
             await self._event(row, "resumed", {"status": "queued"})
@@ -384,7 +383,7 @@ class RunRepository:
             row = await self._row(run_id)
             if row["status"] in TERMINAL_STATUSES:
                 return
-            timestamp = now()
+            timestamp = utc_now()
             if status == "completed":
                 cursor = await self.connection.execute(
                     "UPDATE conversations SET status='ready', active_run_id=NULL, "

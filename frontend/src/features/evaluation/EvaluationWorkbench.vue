@@ -21,6 +21,7 @@ import {
   caseSetSignature,
 } from './cases'
 import { download } from './download'
+import { percent as formatPercent } from './format'
 import { useReviewDraft } from './useReviewDraft'
 import MetricChart from './MetricChart.vue'
 import QualityOverview from './QualityOverview.vue'
@@ -346,8 +347,7 @@ watch(ownHistory, (rows) => {
   }
 })
 const status = (value: string) => evaluationStatus[value] || value
-const percent = (value: number | null | undefined) =>
-  value == null ? '未标注' : `${(value * 100).toFixed(1)}%`
+const percent = (value: number | null | undefined) => formatPercent(value, '未标注')
 function fileName(fileId: string) {
   return (
     current.value?.snapshot.files.find((f) => f.file_id === fileId)?.name ||

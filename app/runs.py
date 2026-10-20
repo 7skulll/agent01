@@ -247,7 +247,12 @@ class RunService:
         try:
             if row["graph_version"] != GRAPH_VERSION:
                 raise ChatError("graph_version_mismatch", "任务图版本不兼容，请重新提交问题。", 409)
-            await self.repository.set_running(run_id)
+            if not await self.repository.set_running(run_id):
+                # Cancelled, recovered or already settled between the initial read and
+                # the claim. Do not execute the graph or consume model/tool budget.
+                logger.warning("run_start_skipped run_id=%s", run_id)
+                elapsed_saved = True
+                return
             graph = self.get_graph()
             config = self.config(run_id)
             deadline = (

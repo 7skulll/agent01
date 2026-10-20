@@ -1,8 +1,10 @@
 import asyncio
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from psycopg.types.json import Jsonb
 from starlette.datastructures import UploadFile
 from support import ScriptModel, rag_answer, settings, test_database, wait_run
 from test_rag_pipeline import Embeddings
@@ -101,6 +103,38 @@ def test_file_search_and_run_scope_are_isolated(client):
     assert history[0]["answer"] == run["answer"]
     assert history[0]["sources"] == run["sources"]
     assert client.get(f"{BASE}/{first}/files").json()["total"] == 1
+
+
+def test_delete_is_blocked_while_an_evaluation_is_running(client):
+    kb_id = create(client, "评测中的知识库")
+    record = upload(client, kb_id)
+    evaluation_id = str(uuid4())
+    now = "2026-01-01T00:00:00+00:00"
+    with test_database() as db:
+        db.execute(
+            "INSERT INTO evaluations(evaluation_id,idempotency_key,created_at,updated_at,"
+            "status,request,snapshot) VALUES (%s,%s,%s,%s,'running',%s,%s)",
+            (
+                evaluation_id,
+                str(uuid4()),
+                now,
+                now,
+                Jsonb({"knowledge_base_id": kb_id}),
+                Jsonb({}),
+            ),
+        )
+    response = client.delete(f"{BASE}/{kb_id}")
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "knowledge_base_busy"
+    assert client.delete(f"{BASE}/{kb_id}/files/{record['file_id']}").status_code == 409
+    assert any(item["kb_id"] == kb_id for item in client.get(BASE).json())
+    with test_database() as db:
+        db.execute(
+            "UPDATE evaluations SET status='completed' WHERE evaluation_id=%s",
+            (evaluation_id,),
+        )
+    assert client.delete(f"{BASE}/{kb_id}").status_code == 200
+    assert not any(item["kb_id"] == kb_id for item in client.get(BASE).json())
 
 
 def test_delete_cascades_and_can_delete_last_library(client):

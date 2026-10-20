@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { QualitySummary } from './types'
+import { percent } from './format'
 defineProps<{ quality: QualitySummary }>()
 const labels: Record<string, string> = {
   fact_coverage: '必要事实完整覆盖',
@@ -8,7 +9,6 @@ const labels: Record<string, string> = {
   citation_support: '引用完整支持',
   refusal: '人工拒答判断正确',
 }
-const percent = (n: number | null) => (n == null ? '未评分' : `${(n * 100).toFixed(1)}%`)
 </script>
 <template>
   <section class="card eval-quality">

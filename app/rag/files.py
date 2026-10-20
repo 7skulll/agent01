@@ -3,7 +3,6 @@ import hashlib
 import logging
 import re
 import unicodedata
-from datetime import datetime, timezone
 from typing import Literal
 from urllib.parse import unquote
 from uuid import uuid4
@@ -11,6 +10,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 from starlette.datastructures import UploadFile
 
+from app.clock import utc_now
 from app.database import Database
 from app.errors import ChatError
 from app.knowledge_bases import require_knowledge_base
@@ -160,7 +160,7 @@ class FileRepository:
         """同一事务内调用，与切片写入原子提交。"""
         await self.database.connection.execute(
             "UPDATE files SET index_status=%s, index_error=%s, updated_at=%s WHERE file_id=%s",
-            (status, error, datetime.now(timezone.utc).isoformat(), file_id),
+            (status, error, utc_now(), file_id),
         )
 
     async def reset_stuck(self) -> int:
@@ -169,7 +169,7 @@ class FileRepository:
             cursor = await self.database.connection.execute(
                 "UPDATE files SET index_status='not_indexed', index_error=NULL, updated_at=%s "
                 "WHERE index_status='parsing'",
-                (datetime.now(timezone.utc).isoformat(),),
+                (utc_now(),),
             )
         return cursor.rowcount
 
@@ -230,7 +230,7 @@ class FileService:
                         stored = None
                         return FileRecord(**existing)
 
-                    now = datetime.now(timezone.utc).isoformat()
+                    timestamp = utc_now()
                     record = FileRecord(
                         file_id=file_id,
                         kb_id=kb_id,
@@ -241,8 +241,8 @@ class FileService:
                         storage_path=stored.path,
                         storage_backend=self.storage.backend,
                         index_status="not_indexed",
-                        created_at=now,
-                        updated_at=now,
+                        created_at=timestamp,
+                        updated_at=timestamp,
                     )
                     await self.repository.insert(record, key)
                 return record

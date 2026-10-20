@@ -94,7 +94,7 @@ def register_error_handlers(app):
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException):
         # 兼容已有路由的 detail 对象，同时规范化框架和旧游标接口的字符串错误。
-        detail = (
+        detail: dict[str, object] = (
             exc.detail
             if isinstance(exc.detail, dict)
             else {

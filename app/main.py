@@ -7,6 +7,7 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from app.agent.runtime import AgentRuntime
+from app.auth import BearerTokenMiddleware
 from app.config import Settings
 from app.conversations import ConversationNotFoundError, ConversationRepository
 from app.database import Database
@@ -218,6 +219,12 @@ def create_app(
         responses={422: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
     )
     register_error_handlers(app)
+    # Middleware is applied outside-in in reverse insertion order: metrics wraps CORS,
+    # which wraps the optional bearer gate. Preflight requests are answered by CORS first.
+    app.add_middleware(
+        BearerTokenMiddleware,
+        token=settings.api_token.get_secret_value().strip(),
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[

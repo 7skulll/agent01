@@ -12,6 +12,9 @@ import type {
   Turns,
 } from './types'
 export const base = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '') + '/api/v1'
+export const authHeaders: Record<string, string> = import.meta.env.VITE_API_TOKEN
+  ? { Authorization: `Bearer ${import.meta.env.VITE_API_TOKEN}` }
+  : {}
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -55,6 +58,7 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
         ...(init.body && !(init.body instanceof FormData)
           ? { 'Content-Type': 'application/json' }
           : {}),
+        ...authHeaders,
         ...init.headers,
       },
     })
@@ -147,6 +151,7 @@ export const api = {
     const response = await fetch(
       `${base}/knowledge-bases/${encodeURIComponent(kbId)}/files/${encodeURIComponent(id)}/download`,
       {
+        headers: authHeaders,
         signal: AbortSignal.timeout(60000),
       },
     )

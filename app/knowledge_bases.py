@@ -3,13 +3,13 @@
 import asyncio
 import logging
 import unicodedata
-from datetime import datetime, timezone
 from uuid import uuid4
 
 import psycopg
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.clock import utc_now
 from app.errors import ChatError
 
 logger = logging.getLogger(__name__)
@@ -84,7 +84,7 @@ class KnowledgeBaseService:
             return [KnowledgeBase(**row) for row in await cursor.fetchall()]
 
     async def create(self, body):
-        kb_id, timestamp = str(uuid4()), datetime.now(timezone.utc).isoformat()
+        kb_id, timestamp = str(uuid4()), utc_now()
         try:
             async with self.database.transaction():
                 await self.database.connection.execute(
@@ -142,6 +142,20 @@ class KnowledgeBaseService:
             ) from None
         return row["name"], content
 
+    async def _ensure_no_running_evaluations(self, kb_id):
+        cursor = await self.database.connection.execute(
+            "SELECT 1 FROM evaluations WHERE status='running' "
+            "AND request->>'knowledge_base_id'=%s LIMIT 1",
+            (kb_id,),
+        )
+        if await cursor.fetchone():
+            raise ChatError(
+                "knowledge_base_busy",
+                "知识库有未结束的评测任务，请先停止评测。",
+                409,
+                True,
+            )
+
     async def delete_file(self, kb_id, file_id):
         async with self.index_service.schedule_lock, self.run_service.control_lock:
             task = self.index_service.tasks.get(kb_id)
@@ -151,6 +165,7 @@ class KnowledgeBaseService:
                 )
             async with self.database.transaction():
                 await require_knowledge_base(self.database, kb_id, lock=True)
+                await self._ensure_no_running_evaluations(kb_id)
                 cursor = await self.database.connection.execute(
                     "SELECT * FROM files WHERE kb_id=%s AND file_id=%s FOR UPDATE", (kb_id, file_id)
                 )
@@ -172,7 +187,7 @@ class KnowledgeBaseService:
                 await self.database.connection.execute(
                     "INSERT INTO file_cleanup_queue (storage_path,created_at) VALUES (%s,%s) "
                     "ON CONFLICT DO NOTHING",
-                    (row["storage_path"], datetime.now(timezone.utc).isoformat()),
+                    (row["storage_path"], utc_now()),
                 )
                 await self.database.connection.execute(
                     "DELETE FROM files WHERE file_id=%s", (file_id,)
@@ -190,7 +205,7 @@ class KnowledgeBaseService:
                         "INSERT INTO file_cleanup_queue (storage_path,created_at) "
                         "SELECT %s,%s WHERE NOT EXISTS "
                         "(SELECT 1 FROM files WHERE storage_path=%s) ON CONFLICT DO NOTHING",
-                        (path, datetime.now(timezone.utc).isoformat(), path),
+                        (path, utc_now(), path),
                     )
                     queued += cursor.rowcount
             pending = await self.cleanup()
@@ -210,6 +225,7 @@ class KnowledgeBaseService:
                 )
                 if await cursor.fetchone() is None:
                     raise ChatError("knowledge_base_not_found", "知识库不存在或已被删除。", 404)
+                await self._ensure_no_running_evaluations(kb_id)
                 cursor = await self.database.connection.execute(
                     "SELECT 1 FROM runs WHERE knowledge_base_id=%s "
                     "AND status IN ('queued','running','paused','recovering') LIMIT 1",
@@ -225,7 +241,7 @@ class KnowledgeBaseService:
                 await self.database.connection.execute(
                     "INSERT INTO file_cleanup_queue (storage_path,created_at) "
                     "SELECT storage_path,%s FROM files WHERE kb_id=%s ON CONFLICT DO NOTHING",
-                    (datetime.now(timezone.utc).isoformat(), kb_id),
+                    (utc_now(), kb_id),
                 )
                 await self.database.connection.execute(
                     "DELETE FROM knowledge_bases WHERE kb_id=%s", (kb_id,)

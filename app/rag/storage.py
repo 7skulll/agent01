@@ -104,6 +104,7 @@ class LocalStorage:
                 if size > MAX_FILE_BYTES:
                     raise FileTooLargeError
                 digest.update(chunk)
+                assert target is not None
                 await disk_io(target.write, chunk)
             if size == 0:
                 raise EmptyFileError

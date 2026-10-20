@@ -1,7 +1,7 @@
 import logging
-from datetime import datetime, timezone
 from uuid import uuid4
 
+from app.clock import utc_now
 from app.errors import ChatError
 from app.schemas import Conversation
 
@@ -30,13 +30,15 @@ class ConversationRepository:
     async def create(self, *, purpose="chat", owner_evaluation_id=None) -> Conversation:
         if owner_evaluation_id is not None and purpose != "evaluation":
             raise ValueError("Only evaluation conversations can have an evaluation owner.")
-        now = datetime.now(timezone.utc).isoformat()
-        item = Conversation(thread_id=uuid4(), created_at=now, updated_at=now, status="ready")
+        timestamp = utc_now()
+        item = Conversation(
+            thread_id=uuid4(), created_at=timestamp, updated_at=timestamp, status="ready"
+        )
         async with self.transaction():
             await self.connection.execute(
                 "INSERT INTO conversations (thread_id, created_at, updated_at, status, purpose) "
                 "VALUES (%s, %s, %s, %s, %s)",
-                (str(item.thread_id), now, now, "ready", purpose),
+                (str(item.thread_id), timestamp, timestamp, "ready", purpose),
             )
             if owner_evaluation_id is not None:
                 cursor = await self.connection.execute(
@@ -71,7 +73,7 @@ class ConversationRepository:
         async with self.transaction():
             cursor = await self.connection.execute(
                 "UPDATE conversations SET title=%s,updated_at=%s WHERE thread_id=%s RETURNING *",
-                (title, datetime.now(timezone.utc).isoformat(), thread_id),
+                (title, utc_now(), thread_id),
             )
             row = await cursor.fetchone()
             if row is None:
@@ -98,7 +100,7 @@ class ConversationRepository:
             await self.connection.execute(
                 "INSERT INTO checkpoint_cleanup_queue (thread_id,created_at) "
                 "SELECT run_id,%s FROM runs WHERE conversation_id=%s ON CONFLICT DO NOTHING",
-                (datetime.now(timezone.utc).isoformat(), thread_id),
+                (utc_now(), thread_id),
             )
             await self.connection.execute("DELETE FROM runs WHERE conversation_id=%s", (thread_id,))
             await self.connection.execute(

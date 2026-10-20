@@ -152,6 +152,48 @@ def test_second_worker_cannot_reset_running_state():
         assert first.portal.call(repository.get, row["run_id"])["status"] == "running"
 
 
+def test_set_running_only_claims_a_queued_run():
+    with TestClient(create_app(settings())) as client:
+        conversation = client.post("/api/v1/conversations").json()["thread_id"]
+        repository = client.app.state.run_service.repository
+        row, _ = client.portal.call(
+            repository.create,
+            conversation,
+            RunRequest(message="x", idempotency_key="claim"),
+            str(uuid4()),
+        )
+        assert client.portal.call(repository.set_running, row["run_id"]) is True
+        assert client.portal.call(repository.set_running, row["run_id"]) is False
+        assert client.portal.call(repository.get, row["run_id"])["status"] == "running"
+
+
+def test_execute_skips_graph_when_state_claim_fails(monkeypatch):
+    with TestClient(create_app(settings())) as client:
+        conversation = client.post("/api/v1/conversations").json()["thread_id"]
+        service = client.app.state.run_service
+        repository = service.repository
+        row, _ = client.portal.call(
+            repository.create,
+            conversation,
+            RunRequest(message="x", idempotency_key="skip"),
+            str(uuid4()),
+        )
+
+        async def no_claim(run_id):
+            return False
+
+        called = []
+
+        def unexpected_graph():
+            called.append(True)
+            raise AssertionError("graph must not run after a failed state claim")
+
+        monkeypatch.setattr(repository, "set_running", no_claim)
+        monkeypatch.setattr(service, "get_graph", unexpected_graph)
+        client.portal.call(service.execute, row["run_id"], "new")
+        assert called == []
+
+
 def test_child_task_does_not_inherit_parent_transaction_connection():
     with TestClient(create_app(settings())) as client:
         database = client.app.state.vector_service.files.database
