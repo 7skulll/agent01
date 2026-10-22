@@ -227,6 +227,13 @@ function ask() {
             </div>
             <button class="button" @click="ask">用这个问题提问 <ArrowUpRight :size="15" /></button>
           </div>
+          <div
+            v-if="Object.keys(result.diagnostics.unapplied_parameters || {}).length"
+            class="notice"
+          >
+            {{ Object.entries(result.diagnostics.unapplied_parameters || {})
+              .map(([name, reason]) => `${name} 未应用：${reason}`).join('；') }}
+          </div>
           <div v-if="degraded.length" class="notice warning">
             检索已降级：{{ degraded.join('、') }}。当前结果来自可用路径。
           </div>
@@ -262,7 +269,8 @@ function ask() {
               <span
                 >向量 <b>{{ score(source.vector_score) }}</b></span
               ><span
-                >BM25 <b>{{ score(source.keyword_score) }}</b></span
+                >{{ source.character_fallback ? '字符匹配' : 'BM25' }}
+                <b>{{ score(source.keyword_score) }}</b></span
               ><span
                 >重排 <b>{{ score(source.rerank_score) }}</b></span
               ><button class="text-button" @click="selected = source">

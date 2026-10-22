@@ -50,6 +50,7 @@ export type SearchResult = Omit<
   sources: Source[]
   index_version?: string
   diagnostics: {
+    unapplied_parameters?: Record<string, string>
     degraded?: string[]
     stage_ms?: Record<string, number>
     rerank_applied?: boolean

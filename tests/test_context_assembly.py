@@ -140,7 +140,7 @@ def test_oversized_structured_evidence_reports_no_context_fit_without_model():
     with TestClient(
         create_app(settings(rag_context_tokens=64), chat_model=model, embedding_model=Embeddings())
     ) as client:
-        upload(client, "年假表格 | 金额\n" * 30)
+        upload(client, "年假表格 | 金额" + "完整行无法放入预算。" * 150)
         index(client)
         with test_database() as db:
             db.execute("UPDATE chunks SET kind='table'")

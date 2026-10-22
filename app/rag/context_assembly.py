@@ -6,6 +6,7 @@ import re
 from collections import Counter, defaultdict
 from copy import deepcopy
 from dataclasses import dataclass, replace
+from functools import lru_cache
 
 from langchain_core.messages import HumanMessage, SystemMessage, messages_to_dict
 
@@ -14,7 +15,7 @@ from app.errors import ChatError
 from app.rag.answer_protocol import ANSWER_INSTRUCTIONS
 from app.rag.terms import search_terms
 
-ASSEMBLY_VERSION = "context-v1"
+ASSEMBLY_VERSION = "context-v2"
 RAG_PROMPT = (
     "你是知识库问答助手。最后一条用户消息是 JSON 数据：evidence 是本轮资料，"
     "question 是原始问题。仅依据本轮资料回答，并用 source_ids 关联 evidence.id。"
@@ -296,14 +297,18 @@ def union_windows(fragments):
 class ContextAssembler:
     def __init__(self, settings, counter, input_budget):
         self.settings, self.counter, self.input_budget = settings, counter, input_budget
+        # 缓存仅属于该装配器，不跨请求共享证据；完整消息仍在 assemble 中精确复检。
+        self._count = lru_cache(maxsize=512)(counter.count)
 
     def evidence_tokens(self, sources):
-        return self.counter.count(serialize(evidence_payload(sources))) if sources else 0
+        return self._count(serialize(evidence_payload(sources))) if sources else 0
 
     def fit(self, unit, budget, question):
         full = snapshot(unit, unit.main)[0]
         if self.evidence_tokens([full]) <= budget:
             return unit.main
+        if unit.source["kind"] == "table":
+            return self.fit_table(unit, budget, question)
         if unit.source["kind"] != "text":
             return []
         chosen = []
@@ -313,6 +318,53 @@ class ContextAssembler:
                 chosen = candidate
         return chosen
 
+    def fit_table(self, unit, budget, question):
+        """只选完整行，保留 Markdown 表头及说明；所有范围仍指向原文。"""
+        fragment = unit.main[0]
+        lines, offset = [], 0
+        for line in fragment.text.splitlines(keepends=True):
+            if line.strip():
+                lines.append((offset, offset + len(line), line))
+            offset += len(line)
+        if not lines:
+            return []
+        headers = []
+        if len(lines) > 1 and re.fullmatch(r"[\s|:—-]+", lines[1][2]):
+            headers = [0, 1]
+        elif "|" in lines[0][2] and ": " not in lines[0][2]:
+            headers = [0]
+        notes = [
+            i
+            for i, (_, _, text) in enumerate(lines)
+            if re.match(r"\s*(备注|注[：:]|说明|但|仅|除|注意)", text)
+        ]
+        terms = {term.casefold() for term in search_terms(question) if term.strip()}
+        ranked = sorted(
+            (i for i in range(len(lines)) if i not in headers and i not in notes),
+            key=lambda i: (-sum(term in lines[i][2].casefold() for term in terms), i),
+        )
+        chosen = []
+        for i in ranked:
+            if not any(term in lines[i][2].casefold() for term in terms):
+                continue
+            indices = sorted(set([*headers, *notes, *chosen, i]))
+            candidate = union_windows(
+                [
+                    replace(fragment, start=lines[j][0], end=lines[j][1], extracted=True)
+                    for j in indices
+                ]
+            )
+            if self.evidence_tokens([snapshot(unit, candidate)[0]]) <= budget:
+                chosen.append(i)
+        if not chosen:
+            return []
+        return union_windows(
+            [
+                replace(fragment, start=lines[j][0], end=lines[j][1], extracted=True)
+                for j in sorted(set([*headers, *notes, *chosen]))
+            ]
+        )
+
     def pack(self, sources, budget, question):
         nonempty = [source for source in sources if source["content"].strip()]
         units = make_units(nonempty)
@@ -320,8 +372,12 @@ class ContextAssembler:
         if len(nonempty) < len(sources):
             skipped["empty_content"] = len(sources) - len(nonempty)
 
+        @lru_cache(maxsize=256)
+        def unit_snapshot(i, fragments):
+            return snapshot(units[i], fragments)[0]
+
         def snapshots(selection):
-            return [snapshot(units[i], selection[i])[0] for i in sorted(selection)]
+            return [unit_snapshot(i, tuple(selection[i])) for i in sorted(selection)]
 
         def fits(selection):
             return self.evidence_tokens(snapshots(selection)) <= budget
@@ -383,6 +439,7 @@ class ContextAssembler:
         return packed, diagnostics
 
     def assemble(self, question, candidates, history, extraction_query=None):
+        self._count.cache_clear()
         baseline = self.counter.messages(render_messages(question, [], []))
         if baseline > self.input_budget:
             raise ChatError("context_limit_exceeded", "当前问题超出输入预算，请缩短问题。", 422)

@@ -4511,6 +4511,7 @@
             "maximum": 1.0,
             "minimum": -1.0,
             "title": "Min Score",
+            "description": "仅 vector 模式应用；hybrid/keyword 会在 diagnostics 中明确返回未应用原因。",
             "default": 0.2
           },
           "mode": {
@@ -4640,6 +4641,33 @@
             "type": "number",
             "title": "Score"
           },
+          "rank": {
+            "type": "integer",
+            "title": "Rank",
+            "default": 0
+          },
+          "rank_source": {
+            "type": "string",
+            "enum": [
+              "recall",
+              "rerank"
+            ],
+            "title": "Rank Source",
+            "default": "recall"
+          },
+          "score_type": {
+            "type": "string",
+            "enum": [
+              "vector_similarity",
+              "bm25",
+              "character_overlap",
+              "recall_rrf",
+              "rerank_model",
+              "rerank_rrf"
+            ],
+            "title": "Score Type",
+            "default": "recall_rrf"
+          },
           "vector_score": {
             "anyOf": [
               {
@@ -4702,6 +4730,11 @@
             },
             "type": "array",
             "title": "Supporting Chunks"
+          },
+          "character_fallback": {
+            "type": "boolean",
+            "title": "Character Fallback",
+            "default": false
           },
           "truncated": {
             "type": "boolean",

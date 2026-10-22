@@ -1449,6 +1449,7 @@ export interface components {
             top_k: number;
             /**
              * Min Score
+             * @description 仅 vector 模式应用；hybrid/keyword 会在 diagnostics 中明确返回未应用原因。
              * @default 0.2
              */
             min_score: number;
@@ -1500,6 +1501,23 @@ export interface components {
             chunk_index: number;
             /** Score */
             score: number;
+            /**
+             * Rank
+             * @default 0
+             */
+            rank: number;
+            /**
+             * Rank Source
+             * @default recall
+             * @enum {string}
+             */
+            rank_source: "recall" | "rerank";
+            /**
+             * Score Type
+             * @default recall_rrf
+             * @enum {string}
+             */
+            score_type: "vector_similarity" | "bm25" | "character_overlap" | "recall_rrf" | "rerank_model" | "rerank_rrf";
             /** Vector Score */
             vector_score?: number | null;
             /** Keyword Score */
@@ -1518,6 +1536,11 @@ export interface components {
             supporting_chunks?: {
                 [key: string]: unknown;
             }[];
+            /**
+             * Character Fallback
+             * @default false
+             */
+            character_fallback: boolean;
             /**
              * Truncated
              * @default false

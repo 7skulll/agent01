@@ -3,7 +3,9 @@
 import asyncio
 import logging
 import math
+import re
 import time
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -56,7 +58,12 @@ class SearchRequest(BaseModel):
     queries: list[str] = Field(default_factory=list, max_length=2)
     file_ids: list[str] | None = Field(default=None, max_length=100)
     top_k: int = Field(default=5, ge=1, le=20)
-    min_score: float = Field(default=0.2, ge=-1, le=1)
+    min_score: float = Field(
+        default=0.2,
+        ge=-1,
+        le=1,
+        description="仅 vector 模式应用；hybrid/keyword 会在 diagnostics 中明确返回未应用原因。",
+    )
     mode: str = Field(default="hybrid", pattern="^(vector|hybrid|keyword)$")
 
 
@@ -71,6 +78,11 @@ class Source(BaseModel):
     kind: str
     chunk_index: int = 0
     score: float
+    rank: int = 0
+    rank_source: Literal["recall", "rerank"] = "recall"
+    score_type: Literal[
+        "vector_similarity", "bm25", "character_overlap", "recall_rrf", "rerank_model", "rerank_rrf"
+    ] = "recall_rrf"
     vector_score: float | None = None
     keyword_score: float | None = None
     rerank_score: float | None = None
@@ -78,6 +90,7 @@ class Source(BaseModel):
     matched_queries: list[str] = Field(default_factory=list)
     alternatives: list[dict] = Field(default_factory=list)
     supporting_chunks: list[dict] = Field(default_factory=list)
+    character_fallback: bool = False
     truncated: bool = False
 
 
@@ -128,6 +141,11 @@ class RetrievalService:
             "recall_limits": dict(zip(("vector", "keyword"), recall_limits(body.mode))),
             "rrf_k": 60,
             "vector_search_mode": self.settings.vector_search_mode,
+            "using_similarity_filter": body.mode == "vector",
+            "unapplied_parameters": (
+                {"min_score": "仅纯向量模式应用相似度阈值"} if body.mode != "vector" else {}
+            ),
+            "score_order": "rank",
         }
         # 空范围是确定性的空结果，不依赖模型配置或外部服务的可用性。
         if body.file_ids == []:
@@ -180,6 +198,7 @@ class RetrievalService:
         diagnostics["fused_count"] = len(candidates)
         candidates = self._dedupe(candidates)
         diagnostics["deduplicated_count"] = len(candidates)
+        diagnostics["character_fallback_count"] = sum(s.character_fallback for s in candidates)
         diagnostics["stage_ms"]["fusion"] = round((time.perf_counter() - fusion_started) * 1000, 2)
         self.metrics.observe("fusion", (time.perf_counter() - fusion_started))
         if capture_trace:
@@ -200,13 +219,20 @@ class RetrievalService:
         diagnostics["using_similarity_filter"] = body.mode == "vector"
         if diagnostics["using_similarity_filter"]:
             candidates = [source for source in candidates if source.vector_score >= body.min_score]
+        original_order = [source.chunk_id for source in candidates]
+        candidates = self._diversify(candidates)
+        diagnostics["diversity_reordered"] = original_order != [s.chunk_id for s in candidates]
         selected, file_counts = [], {}
         for source in candidates:
             count = file_counts.get(source.file_id, 0)
             if count >= self.settings.retrieval_max_per_file:
                 continue
             file_counts[source.file_id] = count + 1
-            selected.append(source.model_copy(update={"citation_id": len(selected) + 1}))
+            selected.append(
+                source.model_copy(
+                    update={"citation_id": len(selected) + 1, "rank": len(selected) + 1}
+                )
+            )
             if len(selected) == body.top_k:
                 break
         if self.settings.retrieval_neighbor_chunks and selected:
@@ -219,6 +245,7 @@ class RetrievalService:
             diagnostics["stage_ms"]["neighbors"] = round(
                 (time.perf_counter() - neighbor_started) * 1000, 2
             )
+        diagnostics["scores_comparable"] = len({s.score_type for s in selected}) <= 1
         diagnostics["stage_ms"]["total"] = round((time.perf_counter() - started) * 1000, 2)
         return SearchResponse(
             query=body.query,
@@ -257,18 +284,24 @@ class RetrievalService:
         lists, rows = [], {}
         if await self.lexical.has_stale_scope(kb_id, body.file_ids):
             raise ChatError("keyword_index_outdated", "全文索引需要本地重建，请调用 index。", 503)
-        for query in queries:
-            terms = await asyncio.to_thread(self.lexical.query_terms, query)
-            if not terms:
-                lists.append([])
-                continue
-            hits = await self.lexical.search(
-                kb_id,
-                body.file_ids,
-                terms,
-                recall_limits(body.mode)[1],
+        terms = await asyncio.to_thread(lambda: [self.lexical.query_terms(q) for q in queries])
+        hits_by_query = await self.lexical.search_many(
+            kb_id, body.file_ids, terms, recall_limits(body.mode)[1]
+        )
+        missing = [i for i, hits in enumerate(hits_by_query) if terms[i] and not hits]
+        if missing:
+            fallbacks = await self.lexical.character_fallback(
+                kb_id, body.file_ids, [queries[i] for i in missing], recall_limits(body.mode)[1]
             )
-            rows.update({row["chunk_id"]: row for row in hits})
+            for i, hits in zip(missing, fallbacks):
+                for row in hits:
+                    row["character_fallback"] = True
+                hits_by_query[i] = hits
+        for hits in hits_by_query:
+            for row in hits:
+                if rows.get(row["chunk_id"], {}).get("character_fallback"):
+                    row["character_fallback"] = True
+                rows[row["chunk_id"]] = row
             lists.append([(row["chunk_id"], -row["lexical_score"]) for row in hits])
         return lists, rows, round((time.perf_counter() - started) * 1000, 2)
 
@@ -294,6 +327,10 @@ class RetrievalService:
             )
             channels.append((weight if body.mode == "hybrid" else 1, merged))
         ranked = ranked_concat(channels)
+        active = [channel for channel, items in grouped.items() if any(items)]
+        score_type = "recall_rrf"
+        if len(active) == 1 and sum(bool(items) for items in grouped[active[0]]) == 1:
+            score_type = "vector_similarity" if active[0] == "vector" else "bm25"
         result = []
         for key, score in ranked:
             row = lookup[key]
@@ -311,6 +348,12 @@ class RetrievalService:
                     kind=row["kind"],
                     chunk_index=row["chunk_index"],
                     score=score,
+                    score_type=(
+                        "character_overlap"
+                        if row.get("character_fallback") and score_type == "bm25"
+                        else score_type
+                    ),
+                    character_fallback=row.get("character_fallback", False),
                     **evidence[key],
                 )
             )
@@ -318,7 +361,7 @@ class RetrievalService:
 
     @staticmethod
     def _dedupe(sources):
-        """按类型、标题和正文去重，保留符号、内部空白及代码缩进和来源信息。"""
+        """正文归一化空白；结构块保留内部空白，返回原文和其他来源。"""
 
         def normalize(text):
             return text.replace("\r\n", "\n").replace("\r", "\n")
@@ -326,6 +369,8 @@ class RetrievalService:
         result, seen = [], {}
         for source in sources:
             content = normalize(source.content)
+            if source.kind == "text":
+                content = re.sub(r"\s+", " ", content).strip()
             key = (
                 source.kind,
                 normalize(source.heading or ""),
@@ -370,7 +415,13 @@ class RetrievalService:
                 raise ValueError("invalid rerank scores")
             # 不修改原候选，后续处理发生异常时仍能完整回退；同分保留召回顺序。
             pool = [
-                source.model_copy(update={"rerank_score": float(score)})
+                source.model_copy(
+                    update={
+                        "rerank_score": float(score),
+                        "rank_source": "rerank",
+                        "score_type": "rerank_model" if weight == 1 else "rerank_rrf",
+                    }
+                )
                 for source, score in zip(pool, scores)
             ]
             ranked = sorted(pool, key=lambda source: -source.rerank_score)
@@ -414,6 +465,51 @@ class RetrievalService:
         finally:
             diagnostics["stage_ms"]["rerank"] = round((time.perf_counter() - started) * 1000, 2)
             self.metrics.observe("rerank", time.perf_counter() - started, outcome)
+
+    @staticmethod
+    def _diversify(candidates):
+        """近重复软降权，不删证据；未重排尾部不能越过已重排候选。"""
+
+        def shingles(source):
+            text = re.sub(r"\s+", " ", source.content).strip()
+            return {text[i : i + 5] for i in range(len(text) - 4)} if len(text) >= 80 else set()
+
+        features = {source.chunk_id: shingles(source) for source in candidates}
+
+        def similarity(left, right):
+            if left.kind != right.kind:
+                return 0
+            a, b = features[left.chunk_id], features[right.chunk_id]
+            if not a or not b:
+                return 0
+            intersection = len(a & b)
+            return intersection / (len(a) + len(b) - intersection)
+
+        result = []
+        for reranked in (True, False):
+            pool = [
+                (i, s) for i, s in enumerate(candidates) if (s.rank_source == "rerank") == reranked
+            ]
+            redundancy = {
+                source.chunk_id: max((similarity(source, other) for other in result), default=0)
+                for _, source in pool
+            }
+            while pool:
+
+                def priority(item):
+                    rank, source = item
+                    penalty = 4 * max(0, (redundancy[source.chunk_id] - 0.6) / 0.4)
+                    return rank + penalty, rank
+
+                chosen = min(pool, key=priority)
+                pool.remove(chosen)
+                result.append(chosen[1])
+                # 每对候选只比较一次，避免在每轮选择时重算已选集合。
+                for _, source in pool:
+                    redundancy[source.chunk_id] = max(
+                        redundancy[source.chunk_id], similarity(source, chosen[1])
+                    )
+        return result
 
     async def _expand_neighbors(self, kb_id, sources):
         """一次回查同文件、同标题、同页的相邻正文，保留补充片段 ID。"""
