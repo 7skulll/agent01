@@ -2,13 +2,16 @@ from openai import APIConnectionError, APIError, APIStatusError, APITimeoutError
 
 
 class ChatError(RuntimeError):
-    def __init__(self, code: str, message: str, status: int, retryable: bool = False):
+    def __init__(
+        self, code: str, message: str, status: int, retryable: bool = False, *, diagnostics=None
+    ):
         super().__init__(message)
         self.code = code
         self.status = status
         self.retryable = retryable
         self.thread_id: str | None = None
         self.request_id: str | None = None
+        self.diagnostics = diagnostics
 
     def detail(self):
         return {
@@ -17,7 +20,14 @@ class ChatError(RuntimeError):
             "retryable": self.retryable,
             "thread_id": self.thread_id,
             "request_id": self.request_id,
+            **({"diagnostics": self.diagnostics} if self.diagnostics else {}),
         }
+
+
+def truncated_response():
+    return ChatError(
+        "model_response_truncated", "模型回答达到输出长度上限，请调整输出预算后重新提问。", 502
+    )
 
 
 def upstream_error(error: APIError) -> ChatError:

@@ -1,6 +1,8 @@
 import { createApp } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import { VueQueryPlugin, QueryClient } from '@tanstack/vue-query'
+import PrimeVue from 'primevue/config'
+import { zhixuPreset } from './ui/theme'
 import App from './App.vue'
 import ChatView from './views/ChatView.vue'
 import KnowledgeView from './views/KnowledgeView.vue'
@@ -20,6 +22,13 @@ const router = createRouter({
 })
 createApp(App)
   .use(router)
+  .use(PrimeVue, {
+    theme: {
+      preset: zhixuPreset,
+      options: { darkModeSelector: '.app-dark', cssLayer: false },
+    },
+    ripple: true,
+  })
   .use(VueQueryPlugin, {
     queryClient: new QueryClient({
       defaultOptions: { queries: { retry: 1, staleTime: 3000, refetchOnWindowFocus: true } },

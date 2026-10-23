@@ -30,6 +30,7 @@ class EvalCase(BaseModel):
     expected: Literal["unlabelled", "answerable", "unanswerable"] = "unlabelled"
     relevant_file_ids: list[FileID] = Field(default_factory=list, max_length=100)
     required_facts: str = Field(default="", max_length=2000)
+    reference_answer: str = Field(default="", max_length=4000)
     judgment_scope: Literal["full", "partial"] = "full"
     negative_file_ids: list[FileID] = Field(default_factory=list, max_length=100)
     tags: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(
@@ -117,6 +118,7 @@ class Review(BaseModel):
     fact_coverage: Literal["pending", "full", "partial", "none"] = "pending"
     unsupported_claims: Literal["pending", "yes", "no"] = "pending"
     conditions: Literal["pending", "pass", "fail", "na"] = "pending"
+    answer_relevancy: Literal["pending", "relevant", "partial", "irrelevant"] = "pending"
     citation_support: Literal["pending", "full", "partial", "none", "na"] = "pending"
     refusal: Literal["pending", "correct", "incorrect", "na"] = "pending"
     causes: list[

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
+import Button from 'primevue/button'
 import {
   UploadCloud,
-  Plus,
   FileText,
   RefreshCw,
   ArrowRight,
@@ -11,7 +11,7 @@ import {
   CheckCheck,
   ChevronLeft,
   ChevronRight,
-  X,
+  Lock,
 } from 'lucide-vue-next'
 import { api, date, size } from '../api/client'
 import ErrorBanner from '../components/ErrorBanner.vue'
@@ -19,6 +19,7 @@ import StatusBadge from '../components/StatusBadge.vue'
 import ActionDialog from '../components/ActionDialog.vue'
 import type { FileItem } from '../api/types'
 import { useKnowledgeBases } from '../features/knowledge/useKnowledgeBases'
+import { canIngest, isAdmin } from '../features/auth/store'
 const bases = useKnowledgeBases()
 const { activeKnowledgeBaseId } = bases
 const client = useQueryClient()
@@ -66,7 +67,7 @@ function drop(event: DragEvent) {
   select(event.dataTransfer?.files || null)
 }
 function select(list: FileList | File[] | null) {
-  if (!list || !bases.current.value) return
+  if (!list || !bases.current.value || !canIngest.value) return
   for (const file of Array.from(list)) {
     const valid =
       /\.(txt|md|pdf|docx|xlsx)$/i.test(file.name) && file.size > 0 && file.size <= 50 * 1024 ** 2
@@ -177,7 +178,7 @@ async function collect() {
 }
 async function index() {
   const kbId = activeKnowledgeBaseId.value
-  if (!bases.current.value) return
+  if (!bases.current.value || !canIngest.value) return
   indexing.value = true
   error.value = null
   message.value = ''
@@ -209,9 +210,15 @@ async function index() {
           }}
         </p>
       </div>
-      <button class="button primary" :disabled="!bases.current.value" @click="input?.click()">
-        <Plus :size="17" /> 上传文件
-      </button>
+      <Button
+        v-if="canIngest"
+        icon="pi pi-upload"
+        label="上传文件"
+        aria-label="上传文件"
+        class="page-heading-action"
+        :disabled="!bases.current.value"
+        @click="input?.click()"
+      />
     </div>
     <input
       ref="input"
@@ -245,6 +252,7 @@ async function index() {
       </div>
     </div>
     <button
+      v-if="canIngest"
       class="upload-zone"
       :disabled="!bases.current.value"
       :class="{ dragging: drag }"
@@ -261,6 +269,13 @@ async function index() {
       >
       <span class="upload-cta">选择文档 <ArrowRight :size="16" /></span>
     </button>
+    <div v-else class="card read-only-note">
+      <span class="stat-icon blue"><Lock :size="20" /></span>
+      <div>
+        <strong>当前账号为普通用户</strong>
+        <p>可以查看资料、检索和问答；上传文件、构建索引与管理知识库请联系员工或管理员账号。</p>
+      </div>
+    </div>
     <div v-if="currentUploads.length" class="upload-list card">
       <div class="section-heading">
         <strong>上传队列</strong
@@ -306,6 +321,7 @@ async function index() {
         </div>
         <div class="toolbar">
           <button
+            v-if="isAdmin"
             class="button"
             :disabled="collecting"
             @click="collect"
@@ -318,7 +334,12 @@ async function index() {
             class="search-input"
             placeholder="按文件名筛选本页"
             aria-label="筛选本页文件"
-          /><button class="button" :disabled="indexing || !bases.current.value" @click="index">
+          /><button
+            v-if="canIngest"
+            class="button"
+            :disabled="indexing || !bases.current.value"
+            @click="index"
+          >
             <RefreshCw :size="15" :class="{ spin: indexing }" />{{
               indexing ? '安排中…' : '构建 / 重试索引'
             }}
@@ -379,6 +400,7 @@ async function index() {
                     下载
                   </button>
                   <button
+                    v-if="canIngest"
                     class="text-button danger-text"
                     :aria-label="`删除文件 ${file.name}`"
                     :disabled="deletingBusy"
@@ -441,3 +463,21 @@ async function index() {
     </div>
   </div>
 </template>
+<style scoped>
+.read-only-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 20px 24px;
+}
+.read-only-note strong {
+  display: block;
+  margin-bottom: 4px;
+}
+.read-only-note p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+</style>

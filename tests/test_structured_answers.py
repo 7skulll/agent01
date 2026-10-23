@@ -5,7 +5,8 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
-from openai import APITimeoutError
+from openai import APITimeoutError, LengthFinishReasonError
+from openai.types.chat import ChatCompletion
 from pydantic import Field
 from support import ScriptModel, events, rag_answer, settings, wait_run
 from test_rag_pipeline import Embeddings, index, rag_run, upload
@@ -16,6 +17,30 @@ from app.main import create_app
 def seed(client):
     upload(client)
     index(client)
+
+
+@pytest.mark.parametrize("repair", [False, True])
+def test_sdk_output_truncation_is_not_internal_error_or_retried(repair):
+    completion = ChatCompletion(
+        id="truncated", created=0, model="test", object="chat.completion", choices=[]
+    )
+    error = LengthFinishReasonError(completion=completion)
+    outputs = ([AIMessage(content="private_bad_json")] if repair else []) + [error]
+    model = ScriptModel(outputs=outputs)
+    with TestClient(
+        create_app(settings(), chat_model=model, embedding_model=Embeddings())
+    ) as client:
+        seed(client)
+        _, rid = rag_run(client)
+        result = wait_run(client, rid)
+        assert result["status"] == "failed"
+        assert result["error"]["code"] == "model_response_truncated"
+        assert result["error"]["http_status"] == 502 and not result["error"]["retryable"]
+        assert result["model_calls"] == 1 + int(repair)
+        assert client.post(f"/api/v1/runs/{rid}/resume").status_code == 409
+        stream = client.get(f"/api/v1/runs/{rid}/events").text
+        assert "private_bad_json" not in stream
+        assert '"finish_reason":"length"' in stream or '"finish_reason": "length"' in stream
 
 
 def refusal_message(reason):

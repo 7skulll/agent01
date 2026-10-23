@@ -86,6 +86,13 @@ SCENES = [
 
 
 def build_manifest():
+    missing = [relative for _, relative, _, _ in SCENES if not (ROOT / relative).is_file()]
+    if missing:
+        raise ValueError(
+            "项目文档案例来源缺失，不能重新生成或宣称已核验："
+            + "、".join(missing)
+            + "。请恢复真实来源并复核，或使用 scripts.prepare_crud_rag 制作 CRUD-RAG 数据。"
+        )
     sources, cases = [], []
     for scene, relative, split, questions in SCENES:
         raw = (ROOT / relative).read_bytes()

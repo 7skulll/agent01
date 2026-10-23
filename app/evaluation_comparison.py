@@ -1,6 +1,7 @@
 """Paired descriptive comparisons; no significance claims for small samples."""
 
 from app.errors import ChatError
+from app.evaluation_quality import ANSWER_METRIC_SPECS, review_metric_score
 from app.evaluation_usage import actual_tokens
 
 KEYS = ("precision", "recall", "hit", "mrr", "ndcg")
@@ -71,11 +72,23 @@ def compare(left, right):
             for key in KEYS
         }
         primary = delta["ndcg"]
+        answer = {}
+        for spec in ANSWER_METRIC_SPECS:
+            a_value = review_metric_score(a, spec)
+            b_value = review_metric_score(b, spec)
+            answer[spec["key"]] = {
+                "left": a_value,
+                "right": b_value,
+                "delta": b_value - a_value
+                if a_value is not None and b_value is not None
+                else None,
+            }
         ta, tb = actual_tokens(a), actual_tokens(b)
         rows.append(
             {
                 "query": a["case"]["query"],
                 "delta": delta,
+                "answer": answer,
                 "outcome": "unscored"
                 if primary is None
                 else "win"
@@ -89,6 +102,19 @@ def compare(left, right):
                 "tokens_delta": tb - ta if complete and ta is not None and tb is not None else None,
             }
         )
+    answer_metrics = {}
+    for spec in ANSWER_METRIC_SPECS:
+        key = spec["key"]
+        paired = [row["answer"][key] for row in rows if row["answer"][key]["delta"] is not None]
+        answer_metrics[key] = {
+            "label": spec["label"],
+            "left": sum(item["left"] for item in paired) / len(paired) if paired else None,
+            "right": sum(item["right"] for item in paired) / len(paired) if paired else None,
+            "delta": sum(item["delta"] for item in paired) / len(paired) if paired else None,
+            "paired": len(paired),
+            "unpaired": len(rows) - len(paired),
+            "definition": spec["definition"],
+        }
     config_changes = {
         key: {
             "left": left["snapshot"]["config"].get(key),
@@ -112,6 +138,7 @@ def compare(left, right):
             else None
             for key in KEYS
         },
+        "answer_metrics": answer_metrics,
         "config_changes": config_changes,
         "experiment_changes": {
             "mode": {"left": left["request"]["mode"], "right": right["request"]["mode"]},

@@ -6,11 +6,12 @@ import unicodedata
 from uuid import uuid4
 
 import psycopg
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.clock import utc_now
 from app.errors import ChatError
+from app.users import require_staff
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/knowledge-bases", tags=["knowledge-bases"])
@@ -256,11 +257,13 @@ async def list_knowledge_bases(request: Request):
     return await request.app.state.knowledge_base_service.list()
 
 
-@router.post("", response_model=KnowledgeBase, status_code=201)
+@router.post(
+    "", response_model=KnowledgeBase, status_code=201, dependencies=[Depends(require_staff)]
+)
 async def create_knowledge_base(body: KnowledgeBaseCreate, request: Request):
     return await request.app.state.knowledge_base_service.create(body)
 
 
-@router.delete("/{kb_id}", response_model=DeleteResult)
+@router.delete("/{kb_id}", response_model=DeleteResult, dependencies=[Depends(require_staff)])
 async def delete_knowledge_base(kb_id: str, request: Request):
     return await request.app.state.knowledge_base_service.delete(kb_id)

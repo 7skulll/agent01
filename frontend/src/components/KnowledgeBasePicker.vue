@@ -5,6 +5,8 @@ import { Plus, Trash2 } from 'lucide-vue-next'
 import { api } from '../api/client'
 import type { KnowledgeBase } from '../api/types'
 import { useKnowledgeBases } from '../features/knowledge/useKnowledgeBases'
+import { canIngest } from '../features/auth/store'
+import ActionDialog from './ActionDialog.vue'
 import ErrorBanner from './ErrorBanner.vue'
 
 const client = useQueryClient()
@@ -77,10 +79,17 @@ async function remove() {
         {{ item.name }}
       </option>
     </select>
-    <button class="icon-button" aria-label="新建知识库" title="新建知识库" @click="openCreate">
+    <button
+      v-if="canIngest"
+      class="icon-button"
+      aria-label="新建知识库"
+      title="新建知识库"
+      @click="openCreate"
+    >
       <Plus :size="17" />
     </button>
     <button
+      v-if="canIngest"
       class="icon-button"
       aria-label="删除当前知识库"
       title="删除当前知识库"
@@ -90,49 +99,40 @@ async function remove() {
       <Trash2 :size="16" />
     </button>
     <ErrorBanner :error="bases.error.value" />
-    <Teleport to="body">
-      <div v-if="creating || deleting" class="kb-modal-backdrop">
-        <section
-          class="kb-modal card"
-          role="dialog"
-          aria-modal="true"
-          :aria-label="creating ? '新建知识库' : '删除知识库'"
-        >
-          <h2>{{ creating ? '新建知识库' : '删除知识库' }}</h2>
-          <form v-if="creating" @submit.prevent="create">
-            <label class="field"
-              >知识库名称<input
-                v-model="name"
-                required
-                maxlength="100"
-                placeholder="例如：产品资料、项目文档、人事制度"
-                :disabled="busy"
-            /></label>
-            <ErrorBanner :error="error" />
-            <div class="kb-modal-actions">
-              <button type="button" class="button" :disabled="busy" @click="creating = false">
-                取消</button
-              ><button class="button primary" :disabled="busy || !name.trim()">
-                {{ busy ? '创建中…' : '创建知识库' }}
-              </button>
-            </div>
-          </form>
-          <template v-else-if="deleting">
-            <p>
-              确认删除「{{ deleting.name }}」？该库及其全部文件、切片和索引将被永久删除，无法撤销。
-            </p>
-            <p class="muted">历史问答会保留。若有索引或未结束的问答，请先完成或取消任务。</p>
-            <ErrorBanner :error="error" />
-            <div class="kb-modal-actions">
-              <button class="button" :disabled="busy" @click="deleting = null">取消</button
-              ><button class="button danger" :disabled="busy" @click="remove">
-                {{ busy ? '删除中…' : '确认删除知识库' }}
-              </button>
-            </div>
-          </template>
-        </section>
-      </div>
-    </Teleport>
+    <ActionDialog :open="creating" title="新建知识库" :busy="busy" @close="creating = false">
+      <form @submit.prevent="create">
+        <label class="field"
+          >知识库名称<input
+            v-model="name"
+            required
+            maxlength="100"
+            placeholder="例如：产品资料、项目文档、人事制度"
+            :disabled="busy"
+        /></label>
+        <ErrorBanner :error="error" />
+        <div class="kb-modal-actions">
+          <button type="button" class="button" :disabled="busy" @click="creating = false">
+            取消</button
+          ><button class="button primary" :disabled="busy || !name.trim()">
+            {{ busy ? '创建中…' : '创建知识库' }}
+          </button>
+        </div>
+      </form>
+    </ActionDialog>
+    <ActionDialog :open="!!deleting" title="删除知识库" :busy="busy" @close="deleting = null">
+      <template v-if="deleting">
+        <p>确认删除「{{ deleting.name }}」？该库及其全部文件、切片和索引将被永久删除，无法撤销。</p>
+        <p class="muted">历史问答会保留。若有索引或未结束的问答，请先完成或取消任务。</p>
+        <ErrorBanner :error="error" />
+        <div class="kb-modal-actions">
+          <button class="button" :disabled="busy" @click="deleting = null">取消</button
+          ><button class="button danger" :disabled="busy" @click="remove">
+            {{ busy ? '删除中…' : '确认删除知识库' }}
+          </button>
+        </div>
+      </template>
+    </ActionDialog>
+
     <div v-if="notice" class="kb-toast notice" role="status">
       {{ notice }} <button class="text-button" @click="notice = ''">关闭</button>
     </div>

@@ -160,6 +160,34 @@ def test_comparison_reports_real_paired_deltas_and_rejects_incompatible_inputs()
         compare(left, right)
 
 
+def test_comparison_answer_metrics_only_pair_explicitly_judged_reviews():
+    left = experiment()
+    right = deepcopy(left)
+    left["results"][0]["review"] = {
+        "verdict": "fail",
+        "unsupported_claims": "yes",
+        "fact_coverage": "none",
+    }
+    right["results"][0]["review"] = {
+        "verdict": "pass",
+        "unsupported_claims": "no",
+        "fact_coverage": "full",
+    }
+    comparison = compare(left, right)
+    assert comparison["answer_metrics"]["faithfulness"]["paired"] == 1
+    assert comparison["answer_metrics"]["faithfulness"]["left"] == 0
+    assert comparison["answer_metrics"]["faithfulness"]["right"] == 1
+    assert comparison["answer_metrics"]["correctness"]["delta"] == 1
+    assert comparison["rows"][0]["answer"]["completeness"]["delta"] == 1
+
+    right["results"][0]["review"] = {"verdict": "pending"}
+    comparison = compare(left, right)
+    assert comparison["answer_metrics"]["correctness"]["paired"] == 0
+    assert comparison["answer_metrics"]["correctness"]["left"] is None
+    assert comparison["answer_metrics"]["correctness"]["delta"] is None
+    assert comparison["answer_metrics"]["correctness"]["unpaired"] == 1
+
+
 def test_comparison_failure_zero_and_partial_unscored_never_fabricates_tokens():
     left = experiment()
     right = deepcopy(left)

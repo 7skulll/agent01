@@ -11,6 +11,96 @@ const source = {
   kind: 'text',
   score: 0.9,
 }
+function pendingAnswerMetric(
+  key: string,
+  label: string,
+  field: string,
+  positive: string,
+  counts: Record<string, number>,
+) {
+  return {
+    key,
+    label,
+    definition: `${label}由人工审核字段 ${field} 严格推导。`,
+    source_field: field,
+    positive_value: positive,
+    counts,
+    numerator: 0,
+    denominator: 0,
+    judged: 0,
+    pending: 1,
+    na: 0,
+    value: null,
+  }
+}
+function pendingQuality(answerQueries: number) {
+  return {
+    total: 1,
+    answer_queries: answerQueries,
+    verdicts: { pending: 1 },
+    pass_rate: null,
+    metrics: {
+      faithfulness: pendingAnswerMetric('faithfulness', '忠实度', 'unsupported_claims', 'no', {
+        yes: 0,
+        no: 0,
+      }),
+      answer_relevancy: pendingAnswerMetric(
+        'answer_relevancy',
+        '答案相关性',
+        'answer_relevancy',
+        'relevant',
+        { relevant: 0, partial: 0, irrelevant: 0 },
+      ),
+      correctness: pendingAnswerMetric('correctness', '正确性', 'verdict', 'pass', {
+        pass: 0,
+        partial: 0,
+        fail: 0,
+      }),
+      completeness: pendingAnswerMetric('completeness', '完整性', 'fact_coverage', 'full', {
+        full: 0,
+        partial: 0,
+        none: 0,
+      }),
+    },
+    dimensions: {},
+    causes: {},
+    reused: 0,
+    usage: { known_tokens: 120, known_queries: 1, unknown_queries: 0, new_model_calls: 1 },
+  }
+}
+function refreshQuality(record: any) {
+  const review = record.results[0].review
+  const rated = (value: string, positive: string, values: string[]) => {
+    const judged = values.includes(value)
+    return { judged, value: judged ? (value === positive ? 1 : 0) : null }
+  }
+  const apply = (metric: any, rating: { judged: boolean; value: number | null }) => {
+    metric.denominator = rating.judged ? 1 : 0
+    metric.judged = rating.judged ? 1 : 0
+    metric.numerator = rating.value === 1 ? 1 : 0
+    metric.value = rating.value
+    metric.pending = rating.judged ? 0 : 1
+  }
+  apply(record.quality.metrics.faithfulness, rated(review.unsupported_claims, 'no', ['yes', 'no']))
+  apply(
+    record.quality.metrics.answer_relevancy,
+    rated(review.answer_relevancy, 'relevant', ['relevant', 'partial', 'irrelevant']),
+  )
+  apply(
+    record.quality.metrics.correctness,
+    rated(review.verdict, 'pass', ['pass', 'partial', 'fail']),
+  )
+  apply(
+    record.quality.metrics.completeness,
+    rated(review.fact_coverage, 'full', ['full', 'partial', 'none']),
+  )
+  if (['pass', 'partial', 'fail'].includes(review.verdict)) {
+    record.quality.metrics.correctness.acceptable =
+      review.verdict === 'pass' || review.verdict === 'partial' ? 1 : 0
+    record.quality.metrics.correctness.acceptable_rate =
+      record.quality.metrics.correctness.acceptable
+  }
+}
 function makeRecord(body: any) {
   const labelled =
     body.cases[0].expected === 'answerable' && body.cases[0].judgment_scope !== 'partial'
@@ -98,6 +188,7 @@ function makeRecord(body: any) {
       answerable_total: body.kind === 'rag' && labelled ? 1 : 0,
       reviewed: 0,
     },
+    quality: pendingQuality(body.kind === 'rag' ? 1 : 0),
   }
 }
 async function setup(page: any) {
@@ -106,6 +197,37 @@ async function setup(page: any) {
   const sets: any[] = []
   await page.route('**/api/v1/**', async (route: any) => {
     const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/auth/status'))
+      return route.fulfill({
+        json: {
+          has_users: true,
+          setup_required: false,
+          registration_enabled: false,
+          password_min_length: 8,
+        },
+      })
+    if (path.endsWith('/auth/me'))
+      return route.fulfill({
+        json: {
+          user: {
+            user_id: 'local',
+            username: 'local',
+            display_name: '本地管理员',
+            role: 'admin',
+            is_active: true,
+            created_at: '',
+            updated_at: '',
+            anonymous: true,
+            service: false,
+          },
+          permissions: {
+            ingest_files: true,
+            manage_knowledge_bases: true,
+            manage_models: true,
+            manage_users: true,
+          },
+        },
+      })
     if (path === '/api/v1/knowledge-bases')
       return route.fulfill({
         json: [
@@ -187,6 +309,7 @@ async function setup(page: any) {
     if (path.endsWith('/reviews/0')) {
       record.results[0].review = route.request().postDataJSON()
       record.summary.reviewed = 1
+      refreshQuality(record)
       return route.fulfill({ json: record })
     }
     if (path.endsWith('/stop')) {
@@ -212,7 +335,10 @@ test('same-page RAG evaluation displays labelled metrics, trace, answer, review 
   await page.getByRole('button', { name: '开始评测', exact: true }).click()
   await expect(page.locator('.eval-metrics .card').nth(0)).toContainText('20.0%')
   await expect(page.locator('.eval-metrics .card').nth(1)).toContainText('100.0%')
-  await expect(page.getByRole('img', { name: '精准率、召回率和命中率随 K 的变化' })).toBeVisible()
+  await expect(page.getByRole('img', { name: '精准率、召回率和 MRR 随 K 的变化' })).toBeVisible()
+  await expect(
+    page.getByRole('img', { name: '生成层指标：忠实度、答案相关性、正确性和完整性柱状图' }),
+  ).toBeVisible()
   await expect(page.getByText('员工有十天年假。', { exact: false })).toBeVisible()
   await expect(page.getByRole('heading', { name: '证据流转（切片级）' })).toBeVisible()
   expect(fixture.submissions).toHaveLength(1)
@@ -236,6 +362,190 @@ test('same-page RAG evaluation displays labelled metrics, trace, answer, review 
     if (width === 1440)
       await page.screenshot({ path: 'test-results/evaluation-v1.png', fullPage: true })
   }
+})
+
+test('dataset library shows saved sets, previews cases and imports a set for testing', async ({
+  page,
+}) => {
+  const fixture = await setup(page)
+  await page.goto('/retrieval')
+  await page.getByRole('tab', { name: 'RAG 评测', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '测评集', exact: true })).toBeVisible()
+  await expect(page.getByText('当前知识库还没有测评集', { exact: false })).toBeVisible()
+
+  await page.getByLabel('导入测评集 JSON').setInputFiles({
+    name: 'imported-set.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(
+      JSON.stringify({
+        name: '导入测试集',
+        tags: ['导入', '年假'],
+        split: 'development',
+        review_status: 'draft',
+        cases: [
+          {
+            query: '员工年假多少天？',
+            expected: 'answerable',
+            relevant_file_ids: ['policy'],
+            judgment_scope: 'full',
+          },
+        ],
+      }),
+    ),
+  })
+  await expect(page.locator('.eval-dataset-library')).toContainText('导入测试集')
+  await expect(page.locator('.eval-dataset-stats')).toContainText('1 道案例')
+
+  await page.getByRole('button', { name: '查看', exact: true }).click()
+  const preview = page.getByLabel('测评集预览')
+  await expect(preview).toContainText('员工年假多少天？')
+  await expect(preview).toContainText('完整标注')
+  await preview.getByRole('button', { name: '载入并测试', exact: true }).click()
+  await expect(page.locator('.eval-metrics')).toBeVisible()
+  expect(fixture.submissions.at(-1)?.cases[0].query).toBe('员工年假多少天？')
+})
+
+test('dataset library lists existing sets and previews cases from the full endpoint', async ({
+  page,
+}) => {
+  await setup(page)
+  const setId = 'c'.repeat(8) + '-1111-4111-8111-111111111111'
+  await page.route('**/api/v1/evaluations/case-sets*', (route) =>
+    route.fulfill({
+      json: [
+        {
+          case_set_id: setId,
+          kb_id: 'default',
+          kb_name: '默认知识库',
+          name: '已有验收测评集',
+          version: 2,
+          tags: ['验收', '年假'],
+          created_at: '2026-10-20T03:00:00Z',
+          split: 'acceptance',
+          review_status: 'verified',
+          frozen: true,
+          case_count: 2,
+          corpus_count: 24,
+        },
+      ],
+    }),
+  )
+  await page.route(`**/api/v1/evaluations/case-sets/${setId}`, (route) =>
+    route.fulfill({
+      json: {
+        case_set_id: setId,
+        name: '已有验收测评集',
+        version: 2,
+        tags: ['验收', '年假'],
+        created_at: '2026-10-20T03:00:00Z',
+        split: 'acceptance',
+        review_status: 'verified',
+        frozen: true,
+        corpus_count: 24,
+        cases: [
+          {
+            query: '员工年假多少天？',
+            expected: 'answerable',
+            relevant_file_ids: ['policy'],
+            judgment_scope: 'full',
+            tags: ['年假'],
+          },
+          {
+            query: '年假需要审批吗？',
+            expected: 'answerable',
+            relevant_file_ids: ['policy'],
+            judgment_scope: 'full',
+            tags: ['年假'],
+          },
+        ],
+      },
+    }),
+  )
+  await page.goto('/retrieval')
+  await page.getByRole('tab', { name: 'RAG 评测', exact: true }).click()
+  await expect(page.locator('.eval-dataset-library')).toContainText('已有验收测评集')
+  await expect(page.locator('.eval-dataset-stats')).toContainText('2 道案例')
+  await expect(page.locator('.eval-dataset-library')).toContainText('已冻结')
+  await page.getByRole('button', { name: '全部知识库', exact: true }).click()
+  await expect(page.locator('.eval-dataset-library')).toContainText('默认知识库')
+  await page.getByRole('button', { name: '查看', exact: true }).click()
+  const preview = page.getByLabel('测评集预览')
+  await expect(preview).toContainText('员工年假多少天？')
+  await expect(preview).toContainText('完整标注')
+})
+
+test('dataset from another knowledge base switches KB and starts a test', async ({ page }) => {
+  await setup(page)
+  const setId = 'd'.repeat(8) + '-1111-4111-8111-111111111111'
+  const crudKb = {
+    kb_id: 'crud-reviewed',
+    name: 'CRUD-RAG-reviewed-v1',
+    file_count: 220,
+    created_at: '2026-10-22T02:36:30Z',
+  }
+  await page.route('**/api/v1/knowledge-bases', (route) =>
+    route.fulfill({
+      json: [
+        { kb_id: 'default', name: '默认知识库', file_count: 1, created_at: '2026-10-19T03:00:00Z' },
+        crudKb,
+      ],
+    }),
+  )
+  await page.route('**/api/v1/evaluations/case-sets*', (route) =>
+    route.fulfill({
+      json: [
+        {
+          case_set_id: setId,
+          kb_id: crudKb.kb_id,
+          kb_name: crudKb.name,
+          name: 'CRUD-22-development-1',
+          version: 1,
+          tags: ['crud-rag'],
+          created_at: '2026-10-22T02:36:30Z',
+          split: 'development',
+          review_status: 'draft',
+          frozen: false,
+          case_count: 1,
+          corpus_count: 220,
+        },
+      ],
+    }),
+  )
+  await page.route(`**/api/v1/evaluations/case-sets/${setId}`, (route) =>
+    route.fulfill({
+      json: {
+        case_set_id: setId,
+        kb_id: crudKb.kb_id,
+        kb_name: crudKb.name,
+        name: 'CRUD-22-development-1',
+        version: 1,
+        tags: ['crud-rag'],
+        created_at: '2026-10-22T02:36:30Z',
+        split: 'development',
+        review_status: 'draft',
+        frozen: false,
+        corpus_count: 220,
+        cases: [
+          {
+            query: '员工年假多少天？',
+            expected: 'answerable',
+            relevant_file_ids: ['policy'],
+            judgment_scope: 'full',
+            tags: ['crud-rag'],
+          },
+        ],
+      },
+    }),
+  )
+  await page.goto('/retrieval')
+  await page.getByRole('tab', { name: 'RAG 评测', exact: true }).click()
+  await expect(page.locator('.eval-dataset-library')).not.toContainText('CRUD-22-development-1')
+  await page.getByRole('button', { name: '全部知识库', exact: true }).click()
+  await expect(page.locator('.eval-dataset-library')).toContainText('CRUD-22-development-1')
+  await expect(page.locator('.eval-dataset-library')).toContainText('CRUD-RAG-reviewed-v1')
+  await page.getByRole('button', { name: '载入并测试', exact: true }).click()
+  await expect(page.locator('.eval-metrics')).toBeVisible()
+  await expect(page.locator('.subtle-chip')).toContainText('CRUD-RAG-reviewed-v1')
 })
 
 test('unlabelled experiments show missing quality metrics instead of perfect scores', async ({
@@ -304,6 +614,7 @@ test('V2 saves a named case-set version with text anchors and structured answer 
   await page.getByLabel('必要事实覆盖', { exact: true }).selectOption('full')
   await page.getByLabel('存在无依据事实').selectOption('no')
   await page.getByLabel('适用条件与例外').selectOption('pass')
+  await page.getByLabel('答案相关性', { exact: true }).selectOption('relevant')
   await page.getByLabel('引用语义支持').selectOption('full')
   await page.getByLabel('拒答判断').selectOption('na')
   await page.getByLabel('人工评价', { exact: true }).selectOption('pass')
@@ -311,6 +622,7 @@ test('V2 saves a named case-set version with text anchors and structured answer 
   await page.reload()
   await page.getByRole('tab', { name: 'RAG 评测', exact: true }).click()
   await expect(page.getByLabel('引用语义支持')).toHaveValue('full')
+  await expect(page.getByLabel('答案相关性', { exact: true })).toHaveValue('relevant')
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 960 })
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
@@ -348,11 +660,55 @@ test('V2 paired comparison visualizes deltas and reports incompatible experiment
             modes: ['keyword', 'hybrid'],
             counts: { win: 1, tie: 0, loss: 0, unscored: 0 },
             metric_delta: { precision: 0.2, recall: 0.5, hit: 0, mrr: 0.5, ndcg: 0.5 },
+            answer_metrics: {
+              faithfulness: {
+                label: '忠实度',
+                left: 0.5,
+                right: 1,
+                delta: 0.5,
+                paired: 1,
+                unpaired: 0,
+                definition: '',
+              },
+              correctness: {
+                label: '正确性',
+                left: 0.5,
+                right: 1,
+                delta: 0.5,
+                paired: 1,
+                unpaired: 0,
+                definition: '',
+              },
+              answer_relevancy: {
+                label: '答案相关性',
+                left: 0.5,
+                right: 1,
+                delta: 0.5,
+                paired: 1,
+                unpaired: 0,
+                definition: '',
+              },
+              completeness: {
+                label: '完整性',
+                left: 0.5,
+                right: 1,
+                delta: 0.5,
+                paired: 1,
+                unpaired: 0,
+                definition: '',
+              },
+            },
             rows: [
               {
                 query: '员工年假多少天',
                 outcome: 'win',
                 delta: { recall: 0.5, ndcg: 0.5 },
+                answer: {
+                  faithfulness: { left: 0.5, right: 1, delta: 0.5 },
+                  answer_relevancy: { left: 0.5, right: 1, delta: 0.5 },
+                  correctness: { left: 0.5, right: 1, delta: 0.5 },
+                  completeness: { left: 0.5, right: 1, delta: 0.5 },
+                },
                 elapsed_ms_delta: 20,
                 tokens_delta: null,
               },
@@ -372,13 +728,41 @@ test('V2 paired comparison visualizes deltas and reports incompatible experiment
           },
         }),
   )
+  await page.route('**/api/v1/evaluations/gate?**', (route) =>
+    route.fulfill({
+      json: {
+        status: 'unscored',
+        checks: [
+          {
+            name: '召回率',
+            source: 'retrieval',
+            delta: 0.5,
+            max_drop: 0.02,
+            status: 'pass',
+          },
+          {
+            name: '忠实度',
+            source: 'answer',
+            delta: null,
+            max_drop: 0.05,
+            status: 'unscored',
+          },
+        ],
+        notice: '未评分不等于通过。',
+      },
+    }),
+  )
   await page.goto('/retrieval')
   await page.getByRole('tab', { name: 'RAG 评测', exact: true }).click()
   await page.getByLabel('基线实验 A').selectOption(eid)
   await page.getByLabel('对照实验 B').selectOption(other)
   await page.getByRole('button', { name: '比较实验', exact: true }).click()
   await expect(page.getByRole('img', { name: '两次实验检索指标差值' })).toBeVisible()
+  await expect(page.getByRole('img', { name: '两次实验回答质量指标差值' })).toBeVisible()
   await expect(page.locator('.eval-comparison')).toContainText('+50.0 pp')
+  await page.getByRole('button', { name: '检查门禁', exact: true }).click()
+  await expect(page.locator('.eval-gate-result')).toContainText('待补评分')
+  await expect(page.locator('.eval-gate-result')).toContainText('未评分不等于通过')
   compatible = false
   await page.getByRole('button', { name: '比较实验', exact: true }).click()
   await expect(page.locator('.eval-comparison')).toContainText('无法直接比较')
@@ -435,7 +819,7 @@ test('unknown model usage is not displayed as a complete actual token total', as
       .getByRole('table')
       .filter({ has: page.getByRole('columnheader', { name: 'Token（实际）', exact: true }) })
       .locator('tbody tr td')
-      .nth(4),
+      .nth(7),
   ).toHaveText('—')
 })
 

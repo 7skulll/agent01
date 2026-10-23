@@ -8,6 +8,7 @@
 上下文组装使用 context-v1；新 RAG 回答使用 rag-answer-v2，任务图为 chat-rag-v6。
 
 - [项目 README](../README.md)：启动、配置、接口和当前边界。
+- [评测指标口径](evaluation-metrics.md)：召回率、精准率、MRR、忠实度、正确性与完整性的严格计算方式。
 - [上下文组装第一版](context-assembly-v1.md)：组装算法、预算与来源快照；历史版本说明。
 - [结构化回答第二版](structured-answer-v2.md)：当前回答协议、引用、资料不足与恢复。
 - [前端验证记录](frontend-validation.md)：分阶段交付及验证证据。

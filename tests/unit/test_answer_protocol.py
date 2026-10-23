@@ -13,6 +13,26 @@ SOURCES = [
 ]
 
 
+def test_json_diagnostics_locate_failure_without_returning_model_text():
+    with pytest.raises(ChatError) as caught:
+        parse_answer('{"private-secret":', SOURCES)
+    error = caught.value
+    assert error.code == "invalid_answer_schema"
+    assert error.diagnostics["validation_kind"] == "invalid_json"
+    assert error.diagnostics["offset"] > 0
+    assert "private-secret" not in json.dumps(error.detail())
+
+
+def test_schema_diagnostics_do_not_include_untrusted_fields_or_values():
+    with pytest.raises(ChatError) as caught:
+        parse_answer('{"private-secret":"sensitive-value"}', SOURCES)
+    error = caught.value
+    assert error.diagnostics["validation_kind"] == "schema"
+    assert "missing" in error.diagnostics["error_types"]
+    assert "private-secret" not in json.dumps(error.detail())
+    assert "sensitive-value" not in json.dumps(error.detail())
+
+
 def payload(text="年假十天。", ids=None):
     return {
         "status": "answered",

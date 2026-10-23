@@ -74,6 +74,27 @@ def test_retrieval_metrics_trace_history_review_and_export(client):
     assert not any(
         "api_key" in key or key == "database_url" for key in report["snapshot"]["config"]
     )
+    assert report["snapshot"]["config"]["llm_max_tokens"] > 0
+    assert report["snapshot"]["config"]["rag_context_tokens"] > 0
+    assert "api_token" not in report["snapshot"]["config"]
+
+
+def test_retrieval_and_rag_use_same_chunk_budget(client, monkeypatch):
+    file = upload(client, "default")
+    index(client, "default")
+    original = client.app.state.retrieval_service.search
+    limits = []
+
+    async def capture(kb_id, body, **kwargs):
+        limits.append(body.top_k)
+        return await original(kb_id, body, **kwargs)
+
+    monkeypatch.setattr(client.app.state.retrieval_service, "search", capture)
+    for kind in ("retrieval", "rag"):
+        report = finish(client, client.post(BASE, json=run_body(file["file_id"], kind=kind)))
+        assert report["results"][0]["status"] == "completed", report
+    expected = client.app.state.runtime.settings.retrieval_answer_candidates
+    assert limits == [expected, expected]
 
 
 def test_rag_uses_one_actual_retrieval_and_keeps_eval_conversations_out_of_chat(
@@ -348,6 +369,12 @@ def test_case_set_versions_bind_labels_and_corpus_and_remain_immutable(client):
         client.post(BASE + "/case-sets", json=draft).json()["case_set_id"] == saved["case_set_id"]
     )
     assert len(client.get(BASE + "/case-sets?knowledge_base_id=default").json()) == 1
+    listing = client.get(BASE + "/case-sets?knowledge_base_id=default").json()[0]
+    assert listing["case_count"] == 1
+    assert listing["corpus_count"] == 1
+    assert listing["kb_id"] == "default"
+    assert listing["kb_name"]
+    assert client.get(BASE + "/case-sets").json()[0]["case_set_id"] == saved["case_set_id"]
     body.update(case_set_id=saved["case_set_id"], cases=saved["cases"])
     report = finish(client, client.post(BASE, json=body))
     assert report["snapshot"]["case_set"]["version"] == 1
@@ -401,6 +428,7 @@ def test_partial_labels_and_evidence_coverage_are_saved_and_exported(client):
         "fact_coverage": "full",
         "unsupported_claims": "no",
         "conditions": "fail",
+        "answer_relevancy": "partial",
         "citation_support": "full",
         "refusal": "na",
         "causes": ["generation"],
@@ -443,6 +471,17 @@ def test_paired_comparison_on_real_retrieval_and_incompatible_labels(client):
     assert response.status_code == 200, response.text
     assert response.json()["counts"] == {"win": 0, "tie": 1, "loss": 0, "unscored": 0}
     assert response.json()["rows"][0]["tokens_delta"] is None
+    gate = client.get(
+        BASE
+        + "/gate?baseline="
+        + a["evaluation_id"]
+        + "&candidate="
+        + b["evaluation_id"]
+    )
+    assert gate.status_code == 200, gate.text
+    # Retrieval checks pass; answer checks are unscored until human/RAGAS review.
+    assert gate.json()["status"] == "unscored"
+    assert {check["status"] for check in gate.json()["checks"]} >= {"pass", "unscored"}
     changed = run_body(file["file_id"])
     changed["cases"][0]["required_facts"] = "新审核要求"
     c = finish(client, client.post(BASE, json=changed))

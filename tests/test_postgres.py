@@ -16,8 +16,7 @@ from app.main import create_app
 from app.schemas import RunRequest
 
 
-@pytest.mark.parametrize("mode", ["exact", "hnsw"])
-def test_vector_rankings_match_reference_with_scope(mode):
+def test_vector_rankings_match_reference_with_scope():
     rng = random.Random(20261015)
     vectors = [[rng.uniform(-1, 1) for _ in range(8)] for _ in range(24)]
     queries = [[rng.uniform(-1, 1) for _ in range(8)] for _ in range(3)]
@@ -32,7 +31,7 @@ def test_vector_rankings_match_reference_with_scope(mode):
             return queries[int(text)]
 
     with TestClient(
-        create_app(settings(embedding_dim=8, vector_search_mode=mode), embedding_model=Model())
+        create_app(settings(embedding_dim=8), embedding_model=Model())
     ) as client:
         files = [upload(client, f"document-{i}", name=f"d{i}.txt") for i in range(len(vectors))]
         index(client)
@@ -67,25 +66,8 @@ def test_vector_rankings_match_reference_with_scope(mode):
             definitions = db.execute(
                 "SELECT indexdef FROM pg_indexes WHERE schemaname=current_schema()"
             ).fetchall()
-            assert any("USING hnsw" in row[0] for row in definitions) is (mode == "hnsw")
-            if mode == "hnsw":
-                db.execute("SET LOCAL enable_seqscan=off")
-                version = client.app.state.vector_service.version
-                plan = db.execute(
-                    "EXPLAIN (FORMAT JSON) SELECT chunk_id FROM chunk_vectors "
-                    "WHERE dimension=8 AND index_version=%s "
-                    "ORDER BY (vector::public.vector(8)) <=> %s::public.vector(8) LIMIT 10",
-                    (version, json.dumps(queries[0])),
-                ).fetchone()[0]
-                assert "vectors_hnsw_" in json.dumps(plan)
-                # exact 表达式不会复用近似索引，切回 exact 无需删除 HNSW 索引。
-                exact_plan = db.execute(
-                    "EXPLAIN (FORMAT JSON) SELECT chunk_id FROM chunk_vectors "
-                    "ORDER BY vector <=> %s::public.vector LIMIT 10",
-                    (json.dumps(queries[0]),),
-                ).fetchone()[0]
-                assert "vectors_hnsw_" not in json.dumps(exact_plan)
-
+            # 仅精确检索，不应创建任何向量近似索引。
+            assert not any("USING hnsw" in row[0] for row in definitions)
             assert (
                 db.execute("SELECT pg_typeof(vector)::text FROM chunk_vectors LIMIT 1").fetchone()[
                     0

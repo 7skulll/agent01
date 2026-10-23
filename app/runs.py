@@ -7,10 +7,10 @@ import psycopg
 from langchain_core.messages import AIMessageChunk, HumanMessage
 from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
-from openai import APIError
+from openai import APIError, LengthFinishReasonError
 
 from app.agent.runtime import AgentRuntime
-from app.errors import ChatError, upstream_error
+from app.errors import ChatError, truncated_response, upstream_error
 from app.rag.context_assembly import history_groups, history_window
 from app.run_graph import build_run_graph
 from app.run_repository import GRAPH_VERSION, TERMINAL_STATUSES, RunRepository
@@ -288,6 +288,8 @@ class RunService:
         except Exception as exc:
             if isinstance(exc, ChatError):
                 error = exc
+            elif isinstance(exc, LengthFinishReasonError):
+                error = truncated_response()
             elif isinstance(exc, APIError):
                 error = upstream_error(exc)
             elif isinstance(exc, TimeoutError):

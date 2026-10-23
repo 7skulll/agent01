@@ -8,6 +8,7 @@ function normalize(review?: AnswerReview): AnswerReview {
     fact_coverage: review?.fact_coverage || 'pending',
     unsupported_claims: review?.unsupported_claims || 'pending',
     conditions: review?.conditions || 'pending',
+    answer_relevancy: review?.answer_relevancy || 'pending',
     citation_support: review?.citation_support || 'pending',
     refusal: review?.refusal || 'pending',
     causes: [...(review?.causes || [])],

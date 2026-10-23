@@ -1,13 +1,13 @@
 from langchain_core.messages import AIMessage, ToolMessage
 
-from app.errors import ChatError
+from app.errors import ChatError, truncated_response
 
 
 def validate_model_message(message):
     if not isinstance(message, AIMessage):
         return
     if message.response_metadata.get("finish_reason") == "length":
-        raise ChatError("model_response_truncated", "模型回答被输出长度上限截断。", 502)
+        raise truncated_response()
     if message.invalid_tool_calls:
         raise ChatError("tool_error", "模型返回了格式无效的工具调用，本轮已停止。", 502)
     call_ids = [call["id"] for call in message.tool_calls]

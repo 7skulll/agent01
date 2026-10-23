@@ -2,7 +2,7 @@ from typing import Annotated
 from urllib.parse import quote
 
 import psycopg
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
 from starlette.requests import ClientDisconnect
@@ -12,6 +12,7 @@ from app.errors import ChatError
 from app.knowledge_bases import FileDeleteResult, GarbageCollectionResult
 from app.rag.files import FileListResponse, FileRecord, IndexResponse
 from app.rag.storage import MAX_FILE_BYTES, EmptyFileError, FileTooLargeError
+from app.users import require_admin, require_staff
 
 router = APIRouter(prefix="/api/v1", tags=["files"])
 
@@ -40,6 +41,7 @@ class LimitedMultipartParser(MultiPartParser):
     "/knowledge-bases/{kb_id}/files",
     response_model=FileRecord,
     status_code=201,
+    dependencies=[Depends(require_staff)],
     openapi_extra={
         "requestBody": {
             "required": True,
@@ -121,7 +123,12 @@ async def list_files(
     return FileListResponse(items=items, total=total, limit=limit, offset=offset)
 
 
-@router.post("/knowledge-bases/{kb_id}/index", response_model=IndexResponse, status_code=202)
+@router.post(
+    "/knowledge-bases/{kb_id}/index",
+    response_model=IndexResponse,
+    status_code=202,
+    dependencies=[Depends(require_staff)],
+)
 async def build_index(kb_id: str, request: Request):
     """批量触发该知识库下所有待解析文件的解析与切片。"""
     try:
@@ -145,11 +152,20 @@ async def download_file(kb_id: str, file_id: str, request: Request):
     )
 
 
-@router.delete("/knowledge-bases/{kb_id}/files/{file_id}", response_model=FileDeleteResult)
+@router.delete(
+    "/knowledge-bases/{kb_id}/files/{file_id}",
+    response_model=FileDeleteResult,
+    dependencies=[Depends(require_staff)],
+)
 async def delete_file(kb_id: str, file_id: str, request: Request):
     return await request.app.state.knowledge_base_service.delete_file(kb_id, file_id)
 
 
-@router.post("/maintenance/files/gc", response_model=GarbageCollectionResult, tags=["maintenance"])
+@router.post(
+    "/maintenance/files/gc",
+    response_model=GarbageCollectionResult,
+    tags=["maintenance"],
+    dependencies=[Depends(require_admin)],
+)
 async def collect_orphan_files(request: Request):
     return await request.app.state.knowledge_base_service.collect_orphans()

@@ -16,7 +16,8 @@ from app.errors import ChatError
 from app.evaluation_evidence import evidence_report
 from app.evaluation_metrics import case_metrics, judgment_coverage, summarize
 from app.evaluation_models import EvalRequest, Review
-from app.evaluation_quality import quality_summary
+from app.evaluation_quality import generation_summary, quality_summary
+from app.evaluation_ragas import RagasUnavailable
 from app.knowledge_bases import require_knowledge_base
 from app.rag.retrieval import SearchRequest
 from app.runs import complete_on_cancel
@@ -57,6 +58,7 @@ class EvaluationService:
         selected = [r for r in row["results"] if not tag or tag in r["case"].get("tags", [])]
         row["filter_tag"] = tag
         row["quality"] = quality_summary(selected)
+        row["generation"] = generation_summary(selected)
         row["summary"] = summarize(selected, row["request"]["k"], kind=row["request"]["kind"])
         row["summary"]["curves"] = []
         for k in (1, 3, 5, 10, 20):
@@ -125,6 +127,15 @@ class EvaluationService:
         settings = self.app.state.runtime.settings
         if body.options.context_tokens is not None and body.kind != "rag":
             raise ChatError("invalid_experiment_options", "上下文预算仅用于完整 RAG。", 422)
+        if body.options.judge != "none":
+            if body.kind != "rag":
+                raise ChatError("invalid_experiment_options", "生成层自动评分仅用于完整 RAG。", 422)
+            if not self.app.state.evaluation_judge.available:
+                raise ChatError(
+                    "judge_not_available",
+                    "RAGAS 未安装或未配置 Embedding，请安装 ragas 可选依赖后再启用。",
+                    503,
+                )
         if body.options.rerank == "on" and (
             self.app.state.retrieval_service.reranker is None
             or settings.retrieval_rerank_weight == 0
@@ -142,10 +153,10 @@ class EvaluationService:
                     "database_url",
                     "storage_path",
                     "base_url",
-                    "token",
                     "secret",
                 )
             )
+            and key != "api_token"
         }
         for key in ("llm_base_url", "embedding_base_url", "rerank_base_url"):
             config[key + "_sha256"] = digest(getattr(settings, key))
@@ -296,6 +307,64 @@ class EvaluationService:
         if not task.cancelled() and task.exception():
             logger.warning("evaluation_worker_failed type=%s", type(task.exception()).__name__)
 
+    @staticmethod
+    def judge_contexts(result):
+        texts = []
+        for source in result.get("context_sources") or []:
+            fragments = source.get("evidence_chunks") or [source]
+            for fragment in fragments:
+                content = (fragment.get("content") or "").strip()
+                if content:
+                    texts.append(content)
+        return list(dict.fromkeys(texts))
+
+    async def judge_results(self, evaluation_id, results):
+        """Add RAGAS semantic scores without changing answers, sources or human reviews."""
+        records, indices = [], []
+        for index, result in enumerate(results):
+            if result.get("status") != "completed" or not result.get("run"):
+                continue
+            answer = (result["run"].get("answer") or "").strip()
+            contexts = self.judge_contexts(result)
+            if not answer or not contexts:
+                continue
+            case = result["case"]
+            reference = (case.get("reference_answer") or "").strip()
+            records.append(
+                {
+                    "slot": len(records),
+                    "question": case["query"],
+                    "answer": answer,
+                    "contexts": contexts,
+                    "reference": reference,
+                }
+            )
+            indices.append(index)
+        if not records:
+            return
+        try:
+            scores = await self.app.state.evaluation_judge.score(records)
+            if len(scores) != len(records):
+                raise RagasUnavailable("RAGAS 返回数量与案例不一致。")
+        except Exception as exc:
+            logger.exception("evaluation_judge_failed")
+            message = "RAGAS 评分失败，请检查依赖、模型配置或服务状态。"
+            for index in indices:
+                results[index]["judge_error"] = message
+            await self.update(evaluation_id, results=results)
+            logger.warning("evaluation_judge_failed_type=%s", type(exc).__name__)
+            return
+        metadata = getattr(self.app.state.evaluation_judge, "metadata", {}) or {}
+        for index, score in zip(indices, scores, strict=True):
+            results[index]["judge"] = {
+                "provider": "ragas",
+                "judged_at": utc_now(),
+                "ragas_version": metadata.get("ragas_version"),
+                "worker": metadata.get("worker"),
+                **score,
+            }
+        await self.update(evaluation_id, results=results)
+
     @complete_on_cancel
     async def start_run(self, evaluation_id, body, case):
         conversation = await self.app.state.runtime.repository.create(
@@ -366,7 +435,10 @@ class EvaluationService:
                         found = await self.app.state.retrieval_service.search(
                             body.knowledge_base_id,
                             SearchRequest(
-                                query=case.query, mode=body.mode, top_k=20, file_ids=body.file_ids
+                                query=case.query,
+                                mode=body.mode,
+                                top_k=self.app.state.runtime.settings.retrieval_answer_candidates,
+                                file_ids=body.file_ids,
                             ),
                             capture_trace=True,
                             **(
@@ -498,6 +570,8 @@ class EvaluationService:
                 result["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 2)
                 await self.update(evaluation_id, results=results)
             stopped = (await self.control(evaluation_id))["stop_requested"]
+            if not stopped and body.options.judge != "none":
+                await self.judge_results(evaluation_id, results)
             await self.update(
                 evaluation_id, status="stopped" if stopped else "completed", active_run_id=None
             )
@@ -538,14 +612,20 @@ class EvaluationService:
                     await self.update(evaluation_id, status="stopped", results=latest["results"])
             return await self.row(evaluation_id)
 
-    async def case_sets(self, kb_id):
+    async def case_sets(self, kb_id=None):
+        condition = "WHERE c.kb_id=%s" if kb_id else ""
+        args = (kb_id,) if kb_id else ()
         async with self.database.read():
             cur = await self.database.connection.execute(
-                "SELECT case_set_id,name,version,tags,created_at,fingerprint,"
-                "split,review_status,frozen "
-                "FROM evaluation_case_sets "
-                "WHERE kb_id=%s ORDER BY created_at DESC LIMIT 100",
-                (kb_id,),
+                "SELECT c.case_set_id,c.kb_id,k.name AS kb_name,c.name,c.version,c.tags,"
+                "c.created_at,c.fingerprint,c.split,c.review_status,c.frozen,"
+                "jsonb_array_length(c.cases) AS case_count,"
+                "jsonb_array_length(c.corpus) AS corpus_count "
+                "FROM evaluation_case_sets c "
+                "JOIN knowledge_bases k ON k.kb_id=c.kb_id "
+                + condition
+                + " ORDER BY c.created_at DESC LIMIT 100",
+                args,
             )
             return await cur.fetchall()
 

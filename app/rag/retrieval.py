@@ -140,12 +140,12 @@ class RetrievalService:
             "fusion": "channel_rrf_then_weighted_rrf",
             "recall_limits": dict(zip(("vector", "keyword"), recall_limits(body.mode))),
             "rrf_k": 60,
-            "vector_search_mode": self.settings.vector_search_mode,
             "using_similarity_filter": body.mode == "vector",
             "unapplied_parameters": (
                 {"min_score": "仅纯向量模式应用相似度阈值"} if body.mode != "vector" else {}
             ),
             "score_order": "rank",
+            "requested_chunk_limit": body.top_k,
         }
         # 空范围是确定性的空结果，不依赖模型配置或外部服务的可用性。
         if body.file_ids == []:

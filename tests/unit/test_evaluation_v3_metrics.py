@@ -39,6 +39,134 @@ def test_quality_scores_never_make_pending_or_na_a_pass_and_reuse_has_no_new_usa
     assert actual_tokens({"token_usage": [{"actual": {"input_tokens": 10}}]}) is None
 
 
+def test_answer_quality_metrics_are_strict_and_do_not_mutate_reviews():
+    from copy import deepcopy
+
+    reviews = [
+        {
+            "verdict": "pass",
+            "unsupported_claims": "no",
+            "answer_relevancy": "relevant",
+            "fact_coverage": "full",
+        },
+        {
+            "verdict": "partial",
+            "unsupported_claims": "no",
+            "answer_relevancy": "relevant",
+            "fact_coverage": "partial",
+        },
+        {
+            "verdict": "fail",
+            "unsupported_claims": "yes",
+            "answer_relevancy": "irrelevant",
+            "fact_coverage": "none",
+        },
+        {
+            "verdict": "pending",
+            "unsupported_claims": "pending",
+            "answer_relevancy": "pending",
+            "fact_coverage": "pending",
+        },
+        {
+            "verdict": "pending",
+            "unsupported_claims": "na",
+            "answer_relevancy": "partial",
+            "fact_coverage": "na",
+        },
+    ]
+    rows = [
+        {"status": "completed", "run": {"model_calls": 1}, "review": review}
+        for review in reviews
+    ]
+    before = deepcopy(rows)
+    quality = quality_summary(rows)
+
+    # pending and na are excluded from every strict denominator, never treated as pass.
+    assert quality["metrics"]["faithfulness"]["denominator"] == 3
+    assert quality["metrics"]["faithfulness"]["numerator"] == 2
+    assert quality["metrics"]["faithfulness"]["pending"] == 1
+    assert quality["metrics"]["faithfulness"]["na"] == 1
+    assert quality["metrics"]["faithfulness"]["value"] == pytest.approx(2 / 3)
+
+    assert quality["metrics"]["correctness"]["denominator"] == 3
+    assert quality["metrics"]["correctness"]["numerator"] == 1
+    assert quality["metrics"]["correctness"]["value"] == pytest.approx(1 / 3)
+    assert quality["metrics"]["correctness"]["acceptable"] == 2
+    assert quality["metrics"]["correctness"]["acceptable_rate"] == pytest.approx(2 / 3)
+
+    assert quality["metrics"]["completeness"]["denominator"] == 3
+    assert quality["metrics"]["completeness"]["numerator"] == 1
+    assert quality["metrics"]["completeness"]["value"] == pytest.approx(1 / 3)
+
+    assert quality["metrics"]["answer_relevancy"]["denominator"] == 4
+    assert quality["metrics"]["answer_relevancy"]["numerator"] == 2
+    assert quality["metrics"]["answer_relevancy"]["value"] == pytest.approx(0.5)
+
+    # Reading and deriving metrics must not rewrite the raw human judgments.
+    assert rows == before
+    assert rows[0]["review"] is reviews[0]
+
+
+def test_generation_summary_keeps_missing_judge_scores_missing():
+    from app.evaluation_quality import generation_summary
+
+    rows = [
+        {
+            "judge": {
+                "faithfulness": 1.0,
+                "answer_relevancy": 0.5,
+                "answer_correctness": None,
+                "completeness": 0.75,
+            }
+        },
+        {"judge": {"faithfulness": 0.0, "answer_relevancy": 0.5}},
+        {"judge_error": "failed"},
+    ]
+    summary = generation_summary(rows)
+    assert summary["available"] is True
+    assert summary["judged_queries"] == 2
+    assert summary["errors"] == 1
+    assert summary["attempted_queries"] == 3
+    assert summary["metrics"]["faithfulness"]["missing"] == 1
+    assert summary["metrics"]["answer_correctness"]["missing"] == 3
+    assert summary["metrics"]["completeness"]["missing"] == 2
+    assert summary["metrics"]["faithfulness"]["value"] == 0.5
+    assert summary["metrics"]["answer_relevancy"]["value"] == 0.5
+    assert summary["metrics"]["answer_correctness"]["value"] is None
+    assert summary["metrics"]["answer_correctness"]["judged"] == 0
+    assert summary["metrics"]["completeness"]["value"] == 0.75
+
+
+def test_answer_quality_metrics_return_null_for_empty_denominators():
+    rows = [
+        {
+            "status": "completed",
+            "run": {"model_calls": 0},
+            "review": {
+                "verdict": "pending",
+                "unsupported_claims": "pending",
+                "fact_coverage": "pending",
+            },
+        }
+    ]
+    quality = quality_summary(rows)
+    for key in ("faithfulness", "correctness", "completeness"):
+        assert quality["metrics"][key]["denominator"] == 0
+        assert quality["metrics"][key]["value"] is None
+
+
+def test_all_failed_judge_attempts_remain_missing_not_zero():
+    from app.evaluation_quality import generation_summary
+
+    summary = generation_summary([{"judge_error": "failed"}, {"judge_error": "timeout"}])
+    assert summary["attempted_queries"] == 2
+    assert summary["judged_queries"] == 0
+    assert summary["errors"] == 2
+    for metric in summary["metrics"].values():
+        assert metric["value"] is None
+        assert metric["missing"] == 2
+
+
 def test_frozen_cases_require_full_verified_evidence():
     body = {
         "knowledge_base_id": "default",

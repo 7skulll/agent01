@@ -1,0 +1,17 @@
+[project]
+name = "ragas-worker"
+version = "0.1.0"
+description = "Isolated RAGAS judge worker for the RAG evaluation service"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "ragas>=0.2.14,<0.3",
+  "langchain-community<0.4",
+  "langchain-openai>=1,<2",
+]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["worker"]

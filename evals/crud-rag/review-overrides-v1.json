@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "reviews": [
+    {
+      "case_id": "crud-140afb2a81ce7b224b6a6845",
+      "action": "exclude",
+      "status": "needs_review",
+      "reason": "问题询问高校与地方政府合作，但参考答案第一项为湖北省政协与省直部门，配套新闻未明确给出第三所高校的合作实例。不能以命中全部三篇或回答三个高校作为正确标准；待人工修订问题、参考答案及必要事实。",
+      "reviewed_at": "2026-10-22",
+      "review_method": "人工逐项核对原始问题、参考答案与三篇配套新闻"
+    }
+  ]
+}

@@ -11,8 +11,17 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "Enterprise RAG"
-    # Empty disables the shared-token gate; set RAG_API_TOKEN to enable it.
+    # 可选服务令牌：脚本/运维以管理员身份访问；浏览器用户仍使用个人账号登录。
     api_token: SecretStr = SecretStr("")
+    # 登录会话有效期；过期后需重新登录。
+    session_ttl_hours: int = Field(default=168, ge=1, le=720)
+    password_min_length: int = Field(default=8, ge=8, le=128)
+    # 首次启动且没有任何账号时自动创建管理员；密码留空则使用页面初始化流程。
+    admin_username: str = "admin"
+    admin_display_name: str = "管理员"
+    admin_password: SecretStr = SecretStr("")
+    # 允许访客自助注册普通用户（只读）；关闭后仅管理员可创建账号。
+    registration_enabled: bool = True
     llm_provider: Literal["deepseek", "openai"] = "deepseek"
     llm_model: str = ""
     llm_base_url: str = ""
@@ -43,8 +52,6 @@ class Settings(BaseSettings):
     embedding_max_batch_tokens: int = Field(default=0, ge=0)
     token_safety_ratio: float = Field(default=0.95, gt=0, le=1)
     chat_token_overhead: int = Field(default=256, ge=0)
-    vector_search_mode: Literal["exact", "hnsw"] = "exact"
-    hnsw_ef_search: int = Field(default=100, ge=10, le=1000)
     retrieval_answer_candidates: int = Field(default=10, ge=1, le=20)
     retrieval_dense_weight: float = Field(default=0.5, ge=0, le=1)
     rerank_enabled: bool = False
@@ -62,6 +69,9 @@ class Settings(BaseSettings):
     retrieval_rerank_weight: float = Field(default=1, ge=0, le=1)
     retrieval_rerank_min_score: float | None = Field(default=None, allow_inf_nan=False)
     retrieval_rerank_timeout_seconds: float = Field(default=10, gt=0, le=60)
+    # 可选 RAGAS worker：主服务不安装 ragas，通过独立进程返回语义评分。
+    ragas_worker_command: str = ""
+    ragas_worker_timeout_seconds: float = Field(default=300, gt=0, le=1800)
     retrieval_max_per_file: int = Field(default=20, ge=1, le=20)
     retrieval_neighbor_chunks: int = Field(default=0, ge=0, le=2)
     rag_history_tokens: int = Field(

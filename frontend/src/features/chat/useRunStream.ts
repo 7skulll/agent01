@@ -1,5 +1,5 @@
 import { onScopeDispose, ref, shallowRef, triggerRef } from 'vue'
-import { api, authHeaders, base, readError, ApiError } from '../../api/client'
+import { api, authHeaders, base, readError, sessionExpired, ApiError } from '../../api/client'
 import { initialStream, reduceEvent, SSEParser } from './stream'
 export function useRunStream(onSync: () => Promise<unknown>) {
   const state = shallowRef(initialStream(''))
@@ -21,7 +21,7 @@ export function useRunStream(onSync: () => Promise<unknown>) {
       let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
       try {
         const response = await fetch(`${base}/runs/${runId}/events?after=${state.value.seq}`, {
-          headers: authHeaders,
+          headers: authHeaders(),
           signal: own.signal,
         })
         if (!response.ok) throw await readError(response)
@@ -66,6 +66,10 @@ export function useRunStream(onSync: () => Promise<unknown>) {
         if (own.signal.aborted) return
         connected.value = false
         warning.value = error instanceof Error ? error.message : '事件连接失败'
+        if (error instanceof ApiError && error.status === 401) {
+          sessionExpired()
+          return
+        }
         if (
           error instanceof ApiError &&
           !error.retryable &&

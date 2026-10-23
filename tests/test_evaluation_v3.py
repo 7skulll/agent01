@@ -2,12 +2,15 @@ import asyncio
 from uuid import uuid4
 
 import pytest
+from fastapi.testclient import TestClient
+from support import ScriptModel, rag_answer, settings
 from test_evaluations import BASE, finish, run_body
 from test_evaluations import client as client
 from test_knowledge_bases import create as create_kb
 from test_knowledge_bases import index, upload
 
 from app.errors import ChatError
+from app.main import create_app
 
 
 def test_experiment_options_apply_to_real_run_without_mutating_workspace(client):
@@ -34,6 +37,76 @@ def test_experiment_options_apply_to_real_run_without_mutating_workspace(client)
         client.post(BASE, json=run_body(file["file_id"], options={"rerank": "on"})).status_code
         == 422
     )
+
+
+def test_ragas_option_scores_completed_rag_without_overwriting_answer():
+    class FakeJudge:
+        available = True
+
+        async def score(self, records):
+            assert records
+            return [
+                {
+                    "faithfulness": 0.9,
+                    "answer_relevancy": 0.8,
+                    "answer_correctness": 0.7,
+                    "completeness": 0.6,
+                }
+                for _ in records
+            ]
+
+    fake = FakeJudge()
+    with TestClient(
+        create_app(
+            settings(),
+            chat_model=ScriptModel(outputs=[rag_answer("十天")]),
+            evaluation_judge=fake,
+        )
+    ) as judged:
+        file = upload(judged, "default")
+        index(judged, "default")
+        body = run_body(file["file_id"], kind="rag", options={"judge": "ragas"})
+        body["cases"][0]["reference_answer"] = "员工每年享有十天带薪年假。"
+        report = finish(judged, judged.post(BASE, json=body))
+        result = report["results"][0]
+        assert result["status"] == "completed", result
+        assert result["judge"]["provider"] == "ragas"
+        assert result["judge"]["faithfulness"] == 0.9
+        assert result["judge"]["completeness"] == 0.6
+        assert result["run"]["answer"]
+        assert report["generation"]["available"] is True
+        assert report["generation"]["metrics"]["faithfulness"]["value"] == 0.9
+        assert report["generation"]["metrics"]["completeness"]["value"] == 0.6
+        assert judged.post(
+            BASE, json=run_body(file["file_id"], options={"judge": "ragas"})
+        ).status_code in (409, 422)
+
+
+def test_answer_metrics_are_derived_on_read_and_never_rewrite_review(client):
+    file = upload(client, "default")
+    index(client, "default")
+    report = finish(client, client.post(BASE, json=run_body(file["file_id"], kind="rag")))
+    eid = report["evaluation_id"]
+    review = {
+        "verdict": "pass",
+        "notes": "依据完整",
+        "fact_coverage": "full",
+        "unsupported_claims": "no",
+        "conditions": "pass",
+        "answer_relevancy": "relevant",
+        "citation_support": "full",
+        "refusal": "na",
+        "causes": ["generation"],
+    }
+    assert client.patch(BASE + "/" + eid + "/reviews/0", json=review).status_code == 200
+    first = client.get(BASE + "/" + eid).json()
+    exported = client.get(BASE + "/" + eid + "/export").json()
+    assert first["results"][0]["review"] == review
+    assert exported["results"][0]["review"] == review
+    assert first["quality"]["metrics"]["faithfulness"]["value"] == 1
+    assert first["quality"]["metrics"]["correctness"]["value"] == 1
+    assert first["quality"]["metrics"]["completeness"]["value"] == 1
+
 
 
 def test_pagination_archive_restore_and_delete_clean_only_owned_evaluation_conversations(client):
@@ -132,13 +205,21 @@ def test_quality_tag_filters_and_report_are_source_backed(client):
     assert (
         client.patch(
             BASE + "/" + eid + "/reviews/0",
-            json={"verdict": "pass", "fact_coverage": "full", "citation_support": "full"},
+            json={
+            "verdict": "pass",
+            "fact_coverage": "full",
+            "unsupported_claims": "no",
+            "citation_support": "full",
+          },
         ).status_code
         == 200
     )
     filtered = client.get(BASE + "/" + eid + "?tag=人事").json()
     assert filtered["quality"]["answer_queries"] == 1
     assert filtered["quality"]["pass_rate"] == 1
+    assert filtered["quality"]["metrics"]["faithfulness"]["value"] == 1
+    assert filtered["quality"]["metrics"]["correctness"]["value"] == 1
+    assert filtered["quality"]["metrics"]["completeness"]["value"] == 1
     assert filtered["summary"]["metric_queries"] == 1
     assert len(filtered["results"]) == 2  # Stable original indexes for reviews.
     text = client.get(BASE + "/" + eid + "/report?tag=人事").json()["markdown"]
@@ -225,10 +306,17 @@ def test_normal_chat_cannot_override_experiment_parameters(client):
     assert response.status_code == 422
 
 
-def test_project_draft_has_verified_provenance_and_scene_separation():
-    from scripts.prepare_evaluation_v3 import build_manifest
+def test_project_draft_preserves_provenance_and_scene_separation(tmp_path, monkeypatch):
+    from scripts import prepare_evaluation_v3 as prepare
 
-    manifest = build_manifest()
+    # The legacy project sources were intentionally removed. Exercise the generator with
+    # independent source fixtures, never restore deleted docs or trust the archived manifest.
+    monkeypatch.setattr(prepare, "ROOT", tmp_path)
+    for _, relative, _, questions in prepare.SCENES:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(quote for _, quote in questions))
+    manifest = prepare.build_manifest()
     assert len(manifest["cases"]) == 30
     assert manifest["review_status"] == "draft" and manifest["frozen"] is False
     assert sum(c["split"] == "development" for c in manifest["cases"]) == 18
@@ -238,6 +326,14 @@ def test_project_draft_has_verified_provenance_and_scene_separation():
     }
     assert not scenes["development"] & scenes["acceptance"]
     assert all(c["judgment_scope"] == "partial" for c in manifest["cases"])
+
+
+def test_missing_project_sources_cannot_regenerate_labels(tmp_path, monkeypatch):
+    from scripts import prepare_evaluation_v3 as prepare
+
+    monkeypatch.setattr(prepare, "ROOT", tmp_path)
+    with pytest.raises(ValueError, match="来源缺失"):
+        prepare.build_manifest()
 
 
 def test_retry_seeds_are_durable_even_when_worker_never_starts(client, monkeypatch):

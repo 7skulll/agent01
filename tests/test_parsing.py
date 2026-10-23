@@ -374,6 +374,8 @@ def test_postgres_schema_supports_parser_metadata_and_large_files():
             "010_evaluation_case_sets.sql",
             "011_evaluation_v3.sql",
             "012_retrieval_search.sql",
+            "013_drop_hnsw_indexes.sql",
+            "014_users.sql",
         }
     with TestClient(create_app(settings())):
         pass

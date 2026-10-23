@@ -49,99 +49,35 @@ def validate_vectors(vectors, count, dim=None):
 
 
 class VectorRepository:
-    def __init__(self, database, settings):
+    def __init__(self, database):
         self.database = database
-        self.settings = settings
-
-    async def ensure_hnsw(self, version, dimension):
-        """精确路径不建 ANN；显式启用时为模型版本/维度创建独立表达式索引。"""
-        if self.settings.vector_search_mode != "hnsw":
-            return
-        if not 1 <= dimension <= 2000:
-            raise ValueError("HNSW vector 索引要求明确配置 1–2000 维；其他维度先使用 exact。")
-        name = "vectors_hnsw_" + hashlib.sha256(f"{version}:{dimension}".encode()).hexdigest()[:24]
-        async with self.database.read():
-            cursor = await self.database.connection.execute(
-                "SELECT extversion FROM pg_extension WHERE extname='vector'"
-            )
-            installed = tuple(
-                int(x) for x in (await cursor.fetchone())["extversion"].split(".")[:2]
-            )
-            if installed < (0, 8):
-                raise ValueError("带过滤的 HNSW 需要 pgvector >= 0.8 的迭代扫描。")
-            cursor = await self.database.connection.execute(
-                "SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid "
-                "JOIN pg_namespace n ON n.oid=c.relnamespace "
-                "WHERE n.nspname=current_schema() AND c.relname=%s",
-                (name,),
-            )
-            existing = await cursor.fetchone()
-            if existing is not None and not existing["indisvalid"]:
-                # CONCURRENTLY 建索引中断会留下 invalid 索引，必须先移除再重试。
-                await self.database.connection.execute(
-                    sql.SQL("DROP INDEX CONCURRENTLY {}").format(sql.Identifier(name))
-                )
-            await self.database.connection.execute(
-                sql.SQL(
-                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS {} ON chunk_vectors USING hnsw "
-                    "((vector::public.vector({})) public.vector_cosine_ops) "
-                    "WHERE dimension={} AND index_version={}"
-                ).format(
-                    sql.Identifier(name),
-                    sql.Literal(dimension),
-                    sql.Literal(dimension),
-                    sql.Literal(version),
-                )
-            )
 
     async def search(self, kb_id, version, vectors, limit, file_ids=None):
-        """默认精确余弦；HNSW 使用类型匹配的表达式和迭代过滤扫描。"""
+        """精确余弦检索；顺序按相似度降序，同分时以 chunk_id 稳定排序。"""
         if file_ids == []:
             return [[] for _ in vectors], {}
         lists, rows = [], {}
-        approximate = self.settings.vector_search_mode == "hnsw"
         for vector in vectors:
-            dimension = len(vector)
-            if approximate and not 1 <= dimension <= 2000:
-                raise EmbeddingError("HNSW 查询向量维度超出支持范围。")
-            distance = (
-                f"(v.vector::public.vector({dimension})) <=> %s::public.vector({dimension})"
-                if approximate
-                else "v.vector <=> %s::public.vector"
-            )
             clauses = [
                 sql.SQL("f.kb_id=%s"),
                 sql.SQL("f.index_status='indexed'"),
                 sql.SQL("v.dimension=%s"),
                 sql.SQL("v.index_version={}").format(sql.Literal(version)),
             ]
-            params = [json.dumps(vector), kb_id, dimension]
+            params = [json.dumps(vector), kb_id, len(vector)]
             if file_ids is not None:
                 clauses.append(sql.SQL("f.file_id=ANY(%s)"))
                 params.append(file_ids)
-            if approximate:
-                params.append(json.dumps(vector))
             params.append(limit)
-            order = distance if approximate else "vector_score DESC,c.chunk_id"
             statement = sql.SQL(
-                "SELECT c.*,f.name,1-(" + distance + ") AS vector_score "
+                "SELECT c.*,f.name,1-(v.vector <=> %s::public.vector) AS vector_score "
                 "FROM chunk_vectors v JOIN chunks c ON c.chunk_id=v.chunk_id "
-                "JOIN files f ON f.file_id=c.file_id WHERE {} ORDER BY " + order + " LIMIT %s"
+                "JOIN files f ON f.file_id=c.file_id WHERE {} "
+                "ORDER BY vector_score DESC,c.chunk_id LIMIT %s"
             ).format(sql.SQL(" AND ").join(clauses))
-            scope = self.database.transaction if approximate else self.database.read
-            async with scope():
-                if approximate:
-                    await self.database.connection.execute(
-                        "SELECT set_config('hnsw.ef_search',%s,true)",
-                        (str(self.settings.hnsw_ef_search),),
-                    )
-                    await self.database.connection.execute(
-                        "SET LOCAL hnsw.iterative_scan='strict_order'"
-                    )
+            async with self.database.read():
                 cursor = await self.database.connection.execute(statement, tuple(params))
                 hits = await cursor.fetchall()
-            if approximate:
-                hits.sort(key=lambda row: (-row["vector_score"], row["chunk_id"]))
             rows.update({row["chunk_id"]: row for row in hits})
             lists.append([(row["chunk_id"], row["vector_score"]) for row in hits])
         return lists, rows

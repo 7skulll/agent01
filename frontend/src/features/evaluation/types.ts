@@ -3,11 +3,31 @@ export interface EvidenceGroup {
   fact: string
   alternatives: { file_id: string; content_hash: string; quote: string; page: number | null }[]
 }
+export interface AnswerMetric {
+  key: 'faithfulness' | 'answer_relevancy' | 'correctness' | 'completeness'
+  label: string
+  definition: string
+  source_field: string
+  positive_value: string
+  counts: Record<string, number>
+  numerator: number
+  denominator: number
+  judged: number
+  pending: number
+  na: number
+  value: number | null
+  acceptable?: number
+  acceptable_rate?: number | null
+}
 export interface QualitySummary {
   total: number
   answer_queries: number
   verdicts: Record<string, number>
   pass_rate: number | null
+  metrics?: Record<
+    'faithfulness' | 'answer_relevancy' | 'correctness' | 'completeness',
+    AnswerMetric
+  >
   dimensions: Record<string, { judged: number; pending: number; na: number; rate: number | null }>
   causes: Record<string, number>
   reused: number
@@ -17,6 +37,22 @@ export interface QualitySummary {
     unknown_queries: number
     new_model_calls: number
   }
+}
+export interface GenerationMetric {
+  value: number | null
+  judged: number
+  missing: number
+  source: 'ragas'
+}
+export interface GenerationSummary {
+  available: boolean
+  judged_queries: number
+  attempted_queries?: number
+  errors: number
+  metrics: Record<
+    'faithfulness' | 'answer_relevancy' | 'answer_correctness' | 'completeness',
+    GenerationMetric
+  >
 }
 export interface HistoryItem {
   evaluation_id: string
@@ -36,16 +72,23 @@ export interface HistoryPage {
 export interface ExperimentOptions {
   rerank: 'inherit' | 'on' | 'off'
   context_tokens: number | null
+  judge?: 'none' | 'ragas'
 }
 export interface CaseSet {
   split?: 'development' | 'acceptance'
   review_status?: 'draft' | 'verified'
   frozen?: boolean
   case_set_id: string
+  kb_id?: string
+  kb_name?: string
   name: string
   version: number
   tags: string[]
   cases: EvalCase[]
+  created_at?: string
+  case_count?: number
+  corpus_count?: number
+  fingerprint?: string
 }
 export interface AnswerReview {
   verdict: string
@@ -53,20 +96,38 @@ export interface AnswerReview {
   fact_coverage?: string
   unsupported_claims?: string
   conditions?: string
+  answer_relevancy?: string
   citation_support?: string
   refusal?: string
   causes?: string[]
+}
+export interface AnswerMetricComparison {
+  label: string
+  left: number | null
+  right: number | null
+  delta: number | null
+  paired: number
+  unpaired: number
+  definition: string
 }
 export interface Comparison {
   rows: {
     query: string
     delta: Scores
+    answer?: Record<
+      'faithfulness' | 'answer_relevancy' | 'correctness' | 'completeness',
+      { left: number | null; right: number | null; delta: number | null }
+    >
     outcome: string
     elapsed_ms_delta: number | null
     tokens_delta: number | null
   }[]
   counts: Record<string, number>
   metric_delta: Scores
+  answer_metrics?: Record<
+    'faithfulness' | 'answer_relevancy' | 'correctness' | 'completeness',
+    AnswerMetricComparison
+  >
   config_changes: Record<string, unknown>
   code_changed: boolean
   modes: string[]
@@ -79,6 +140,7 @@ export interface EvalCase {
   expected: 'unlabelled' | 'answerable' | 'unanswerable'
   relevant_file_ids: string[]
   required_facts: string
+  reference_answer?: string
   judgment_scope?: 'full' | 'partial'
   negative_file_ids?: string[]
   tags?: string[]
@@ -112,6 +174,17 @@ export interface EvalResult {
     actual?: { input_tokens?: number; output_tokens?: number }
   }[]
   metrics?: Scores | null
+  judge?: {
+    provider: string
+    judged_at: string
+    ragas_version?: string
+    worker?: string
+    faithfulness: number | null
+    answer_relevancy: number | null
+    answer_correctness: number | null
+    completeness: number | null
+  }
+  judge_error?: string
   elapsed_ms?: number
   error?: { code: string; message: string }
   judgments?: {
@@ -136,6 +209,7 @@ export interface EvalResult {
 export interface EvalRecord {
   evaluation_id: string
   quality?: QualitySummary
+  generation?: GenerationSummary
   archived?: boolean
   status: string
   created_at: string

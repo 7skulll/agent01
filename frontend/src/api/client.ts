@@ -1,4 +1,8 @@
 import type {
+  AuthLogin,
+  AuthSession,
+  AuthStatus,
+  AuthUser,
   Conversation,
   ModelsInfo,
   LLMInput,
@@ -10,11 +14,43 @@ import type {
   Run,
   SearchResult,
   Turns,
+  UserCreate,
+  UserUpdate,
 } from './types'
 export const base = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '') + '/api/v1'
-export const authHeaders: Record<string, string> = import.meta.env.VITE_API_TOKEN
-  ? { Authorization: `Bearer ${import.meta.env.VITE_API_TOKEN}` }
-  : {}
+const TOKEN_KEY = 'rag.auth.token'
+function storedToken() {
+  try {
+    return localStorage.getItem(TOKEN_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+/** 当前登录会话令牌，仅保存在浏览器本地；服务端只保存摘要。 */
+export const sessionToken = { value: storedToken() }
+export function setSessionToken(token: string | null) {
+  sessionToken.value = token || ''
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token)
+    else localStorage.removeItem(TOKEN_KEY)
+  } catch {
+    /* 隐私模式等无法持久化时仅保留内存状态 */
+  }
+}
+export function authHeaders(): Record<string, string> {
+  return sessionToken.value ? { Authorization: `Bearer ${sessionToken.value}` } : {}
+}
+const unauthorizedHandlers = new Set<() => void>()
+/** 会话失效：清除本地令牌并通知界面回到登录页。 */
+export function sessionExpired() {
+  setSessionToken(null)
+  unauthorizedHandlers.forEach((handler) => handler())
+}
+/** 会话失效时通知界面回到登录页；返回取消订阅函数。 */
+export function onUnauthorized(handler: () => void) {
+  unauthorizedHandlers.add(handler)
+  return () => unauthorizedHandlers.delete(handler)
+}
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -58,11 +94,15 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
         ...(init.body && !(init.body instanceof FormData)
           ? { 'Content-Type': 'application/json' }
           : {}),
-        ...authHeaders,
+        ...authHeaders(),
         ...init.headers,
       },
     })
-    if (!response.ok) throw await readError(response)
+    if (!response.ok) {
+      const error = await readError(response)
+      if (response.status === 401 && !path.startsWith('/auth/')) sessionExpired()
+      throw error
+    }
     return (await response.json()) as T
   } finally {
     clearTimeout(timeout)
@@ -72,6 +112,39 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
 const post = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) })
 export const api = {
+  authStatus: () => request<AuthStatus>('/auth/status'),
+  login: (username: string, password: string) =>
+    post<AuthLogin>('/auth/login', { username, password }),
+  setup: (username: string, password: string, displayName: string) =>
+    post<AuthLogin>('/auth/setup', {
+      username,
+      password,
+      display_name: displayName,
+    }),
+  register: (username: string, password: string, displayName: string) =>
+    post<AuthLogin>('/auth/register', {
+      username,
+      password,
+      display_name: displayName,
+    }),
+  logout: () => post<{ ok: boolean }>('/auth/logout'),
+  me: () => request<AuthSession>('/auth/me'),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    post<AuthLogin>('/auth/password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+  users: () => request<AuthUser[]>('/users'),
+  createUser: (body: UserCreate) => post<AuthUser>('/users', body),
+  updateUser: (id: string, body: UserUpdate) =>
+    request<AuthUser>(`/users/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  deleteUser: (id: string) =>
+    request<{ user_id: string; deleted: boolean }>(`/users/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
   modelSettings: () => request<ModelsInfo>('/settings/models'),
   saveLLM: (body: LLMInput) =>
     request<ModelsInfo>('/settings/models/llm', { method: 'PUT', body: JSON.stringify(body) }),
@@ -151,11 +224,14 @@ export const api = {
     const response = await fetch(
       `${base}/knowledge-bases/${encodeURIComponent(kbId)}/files/${encodeURIComponent(id)}/download`,
       {
-        headers: authHeaders,
+        headers: authHeaders(),
         signal: AbortSignal.timeout(60000),
       },
     )
-    if (!response.ok) throw await readError(response)
+    if (!response.ok) {
+      if (response.status === 401) sessionExpired()
+      throw await readError(response)
+    }
     const url = URL.createObjectURL(await response.blob())
     const link = document.createElement('a')
     link.href = url

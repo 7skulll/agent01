@@ -5,6 +5,7 @@ import {
   BrainCircuit,
   Database,
   KeyRound,
+  Lock,
   Save,
   RotateCcw,
   Check,
@@ -12,9 +13,15 @@ import {
 } from 'lucide-vue-next'
 import { api } from '../api/client'
 import ErrorBanner from '../components/ErrorBanner.vue'
+import UsersPanel from '../features/users/UsersPanel.vue'
+import { isAdmin } from '../features/auth/store'
 import type { ModelsInfo } from '../api/types'
 const client = useQueryClient()
-const query = useQuery({ queryKey: ['model-settings'], queryFn: api.modelSettings })
+const query = useQuery({
+  queryKey: ['model-settings'],
+  queryFn: api.modelSettings,
+  enabled: isAdmin,
+})
 const llm = reactive({
   provider: 'openai' as 'openai' | 'deepseek',
   model: '',
@@ -101,212 +108,242 @@ async function save(kind: 'llm' | 'embedding', reset = false) {
       </div>
       <span class="subtle-chip"><KeyRound :size="14" /> 自定义 API 接入</span>
     </div>
-    <div class="settings-note">
-      <KeyRound :size="18" />
-      <p>
-        API Key
-        仅保存在当前服务端数据库，不会回传或写入浏览器存储。此处配置对整个工作空间生效；有未结束的问答或索引任务时，请先完成或取消。
-      </p>
-    </div>
-    <ErrorBanner :error="error || query.error.value" />
-    <div v-if="message" class="notice" role="status"><Check :size="15" /> {{ message }}</div>
-    <div v-if="reindex" class="notice warning" role="status">
-      Embedding 配置已切换，请到知识库重新构建索引后使用新的向量检索。<RouterLink
-        to="/knowledge"
-        class="text-button"
-        >前往知识库 <ArrowRight :size="14"
-      /></RouterLink>
-    </div>
-    <p v-if="query.isPending.value" class="muted">正在读取模型配置…</p>
-    <div v-else-if="loaded" class="model-settings-grid">
-      <form
-        class="card model-settings-card"
-        aria-label="对话模型配置"
-        @submit.prevent="save('llm')"
-      >
-        <div class="section-heading">
-          <div class="model-title">
-            <span class="stat-icon green"><BrainCircuit :size="21" /></span>
-            <div>
-              <h2>对话模型</h2>
-              <p>用于普通对话、知识问答与查询改写</p>
+    <template v-if="isAdmin">
+      <div class="settings-note">
+        <KeyRound :size="18" />
+        <p>
+          API Key
+          仅保存在当前服务端数据库，不会回传或写入浏览器存储。此处配置对整个工作空间生效；有未结束的问答或索引任务时，请先完成或取消。
+        </p>
+      </div>
+      <ErrorBanner :error="error || query.error.value" />
+      <div v-if="message" class="notice" role="status"><Check :size="15" /> {{ message }}</div>
+      <div v-if="reindex" class="notice warning" role="status">
+        Embedding 配置已切换，请到知识库重新构建索引后使用新的向量检索。<RouterLink
+          to="/knowledge"
+          class="text-button"
+          >前往知识库 <ArrowRight :size="14"
+        /></RouterLink>
+      </div>
+      <p v-if="query.isPending.value" class="muted">正在读取模型配置…</p>
+      <div v-else-if="loaded" class="model-settings-grid">
+        <form
+          class="card model-settings-card"
+          aria-label="对话模型配置"
+          @submit.prevent="save('llm')"
+        >
+          <div class="section-heading">
+            <div class="model-title">
+              <span class="stat-icon green"><BrainCircuit :size="21" /></span>
+              <div>
+                <h2>对话模型</h2>
+                <p>用于普通对话、知识问答与查询改写</p>
+              </div>
             </div>
+            <span class="badge" :class="query.data.value?.llm.ready ? 'completed' : 'muted'">{{
+              query.data.value?.llm.ready ? '已配置' : '待配置'
+            }}</span>
           </div>
-          <span class="badge" :class="query.data.value?.llm.ready ? 'completed' : 'muted'">{{
-            query.data.value?.llm.ready ? '已配置' : '待配置'
-          }}</span>
-        </div>
-        <div class="form-body">
-          <label class="field"
-            >接口类型<select v-model="llm.provider" aria-label="对话接口类型">
-              <option value="openai">OpenAI 兼容</option>
-              <option value="deepseek">DeepSeek</option></select
-            ><small
-              >服务商需支持所选协议；普通对话需要工具调用，知识问答使用 JSON mode。</small
-            ></label
-          >
-          <label class="field"
-            >服务地址<input
-              v-model.trim="llm.base_url"
-              aria-label="对话服务地址"
-              type="url"
-              required
-              maxlength="2048"
-              placeholder="https://your-provider.example/v1"
-              autocomplete="off"
-            /><small>填写 API Base URL，包含服务商要求的版本路径。</small></label
-          >
-          <label class="field"
-            >模型名称<input
-              v-model.trim="llm.model"
-              aria-label="对话模型名称"
-              required
-              maxlength="200"
-              placeholder="填写服务商提供的模型 ID"
-              autocomplete="off"
-          /></label>
-          <label class="field"
-            >API Key
-            <span v-if="query.data.value?.llm.key_configured" class="key-saved"
-              ><Check :size="12" /> 已设置，留空保留</span
-            ><input
-              v-model="llm.api_key"
-              aria-label="对话 API Key"
-              type="password"
-              :required="!query.data.value?.llm.key_configured"
-              autocomplete="new-password"
-              :placeholder="
-                query.data.value?.llm.key_configured ? '留空保留现有密钥' : '请输入你的 API Key'
-              "
-          /></label>
-          <div class="field-row">
+          <div class="form-body">
             <label class="field"
-              >上下文窗口<input
-                v-model.number="llm.input_tokens"
-                aria-label="对话上下文窗口"
-                type="number"
+              >接口类型<select v-model="llm.provider" aria-label="对话接口类型">
+                <option value="openai">OpenAI 兼容</option>
+                <option value="deepseek">DeepSeek</option></select
+              ><small
+                >服务商需支持所选协议；普通对话需要工具调用，知识问答使用 JSON mode。</small
+              ></label
+            >
+            <label class="field"
+              >服务地址<input
+                v-model.trim="llm.base_url"
+                aria-label="对话服务地址"
+                type="url"
                 required
-                min="512"
-                max="131072" /></label
-            ><label class="field"
-              >最大输出 Token<input
-                v-model.number="llm.max_tokens"
-                aria-label="最大输出 Token"
-                type="number"
+                maxlength="2048"
+                placeholder="https://your-provider.example/v1"
+                autocomplete="off"
+              /><small>填写 API Base URL，包含服务商要求的版本路径。</small></label
+            >
+            <label class="field"
+              >模型名称<input
+                v-model.trim="llm.model"
+                aria-label="对话模型名称"
                 required
-                min="1"
-                max="8192"
+                maxlength="200"
+                placeholder="填写服务商提供的模型 ID"
+                autocomplete="off"
             /></label>
-          </div>
-          <div class="model-actions">
-            <button
-              type="button"
-              class="text-button"
-              :disabled="!!saving || query.data.value?.llm.source !== 'custom'"
-              @click="save('llm', true)"
-            >
-              <RotateCcw :size="13" /> 恢复环境配置</button
-            ><button class="button primary" :disabled="!!saving">
-              <Save :size="14" />{{ saving === 'llm' ? '保存中…' : '保存对话模型' }}
-            </button>
-          </div>
-        </div>
-      </form>
-      <form
-        class="card model-settings-card"
-        aria-label="Embedding 模型配置"
-        @submit.prevent="save('embedding')"
-      >
-        <div class="section-heading">
-          <div class="model-title">
-            <span class="stat-icon blue"><Database :size="21" /></span>
-            <div>
-              <h2>Embedding 模型</h2>
-              <p>用于文档向量化与语义检索</p>
+            <label class="field"
+              >API Key
+              <span v-if="query.data.value?.llm.key_configured" class="key-saved"
+                ><Check :size="12" /> 已设置，留空保留</span
+              ><input
+                v-model="llm.api_key"
+                aria-label="对话 API Key"
+                type="password"
+                :required="!query.data.value?.llm.key_configured"
+                autocomplete="new-password"
+                :placeholder="
+                  query.data.value?.llm.key_configured ? '留空保留现有密钥' : '请输入你的 API Key'
+                "
+            /></label>
+            <div class="field-row">
+              <label class="field"
+                >上下文窗口<input
+                  v-model.number="llm.input_tokens"
+                  aria-label="对话上下文窗口"
+                  type="number"
+                  required
+                  min="512"
+                  max="131072" /></label
+              ><label class="field"
+                >最大输出 Token<input
+                  v-model.number="llm.max_tokens"
+                  aria-label="最大输出 Token"
+                  type="number"
+                  required
+                  min="1"
+                  max="8192"
+              /></label>
+            </div>
+            <div class="model-actions">
+              <button
+                type="button"
+                class="text-button"
+                :disabled="!!saving || query.data.value?.llm.source !== 'custom'"
+                @click="save('llm', true)"
+              >
+                <RotateCcw :size="13" /> 恢复环境配置</button
+              ><button class="button primary" :disabled="!!saving">
+                <Save :size="14" />{{ saving === 'llm' ? '保存中…' : '保存对话模型' }}
+              </button>
             </div>
           </div>
-          <span class="badge" :class="query.data.value?.embedding.ready ? 'completed' : 'muted'">{{
-            query.data.value?.embedding.ready ? '已配置' : '待配置'
-          }}</span>
-        </div>
-        <div class="form-body">
-          <div class="model-protocol">
-            <span class="subtle-chip">OpenAI 兼容 Embeddings API</span>
-            <p>文档与查询共享此配置。更换模型或服务地址后，需要重新构建知识库索引。</p>
+        </form>
+        <form
+          class="card model-settings-card"
+          aria-label="Embedding 模型配置"
+          @submit.prevent="save('embedding')"
+        >
+          <div class="section-heading">
+            <div class="model-title">
+              <span class="stat-icon blue"><Database :size="21" /></span>
+              <div>
+                <h2>Embedding 模型</h2>
+                <p>用于文档向量化与语义检索</p>
+              </div>
+            </div>
+            <span
+              class="badge"
+              :class="query.data.value?.embedding.ready ? 'completed' : 'muted'"
+              >{{ query.data.value?.embedding.ready ? '已配置' : '待配置' }}</span
+            >
           </div>
-          <label class="field"
-            >服务地址<input
-              v-model.trim="embedding.base_url"
-              aria-label="Embedding 服务地址"
-              type="url"
-              required
-              maxlength="2048"
-              placeholder="https://your-provider.example/v1"
-              autocomplete="off"
-          /></label>
-          <label class="field"
-            >模型名称<input
-              v-model.trim="embedding.model"
-              aria-label="Embedding 模型名称"
-              required
-              maxlength="200"
-              placeholder="填写 Embedding 模型 ID"
-              autocomplete="off"
-          /></label>
-          <label class="field"
-            >API Key
-            <span v-if="query.data.value?.embedding.key_configured" class="key-saved"
-              ><Check :size="12" /> 已设置，留空保留</span
-            ><input
-              v-model="embedding.api_key"
-              aria-label="Embedding API Key"
-              type="password"
-              :required="!query.data.value?.embedding.key_configured"
-              autocomplete="new-password"
-              :placeholder="
-                query.data.value?.embedding.key_configured
-                  ? '留空保留现有密钥'
-                  : '请输入你的 API Key'
-              "
-          /></label>
-          <div class="field-row">
+          <div class="form-body">
+            <div class="model-protocol">
+              <span class="subtle-chip">OpenAI 兼容 Embeddings API</span>
+              <p>文档与查询共享此配置。更换模型或服务地址后，需要重新构建知识库索引。</p>
+            </div>
             <label class="field"
-              >向量维度<input
-                v-model.number="embedding.dimension"
-                aria-label="向量维度"
-                type="number"
+              >服务地址<input
+                v-model.trim="embedding.base_url"
+                aria-label="Embedding 服务地址"
+                type="url"
                 required
-                min="0"
-                max="16000"
-              /><small>0 表示自动推断；HNSW 需明确填写维度。</small></label
-            ><label class="field"
-              >单条输入 Token 上限<input
-                v-model.number="embedding.max_input_tokens"
-                aria-label="Embedding 输入上限"
-                type="number"
+                maxlength="2048"
+                placeholder="https://your-provider.example/v1"
+                autocomplete="off"
+            /></label>
+            <label class="field"
+              >模型名称<input
+                v-model.trim="embedding.model"
+                aria-label="Embedding 模型名称"
                 required
-                min="1"
-                max="1000000"
-              /><small>按所用服务的模型限制填写。</small></label
-            >
+                maxlength="200"
+                placeholder="填写 Embedding 模型 ID"
+                autocomplete="off"
+            /></label>
+            <label class="field"
+              >API Key
+              <span v-if="query.data.value?.embedding.key_configured" class="key-saved"
+                ><Check :size="12" /> 已设置，留空保留</span
+              ><input
+                v-model="embedding.api_key"
+                aria-label="Embedding API Key"
+                type="password"
+                :required="!query.data.value?.embedding.key_configured"
+                autocomplete="new-password"
+                :placeholder="
+                  query.data.value?.embedding.key_configured
+                    ? '留空保留现有密钥'
+                    : '请输入你的 API Key'
+                "
+            /></label>
+            <div class="field-row">
+              <label class="field"
+                >向量维度<input
+                  v-model.number="embedding.dimension"
+                  aria-label="向量维度"
+                  type="number"
+                  required
+                  min="0"
+                  max="16000"
+                /><small>0 表示首次调用后自动推断。</small></label
+              ><label class="field"
+                >单条输入 Token 上限<input
+                  v-model.number="embedding.max_input_tokens"
+                  aria-label="Embedding 输入上限"
+                  type="number"
+                  required
+                  min="1"
+                  max="1000000"
+                /><small>按所用服务的模型限制填写。</small></label
+              >
+            </div>
+            <div class="model-actions">
+              <button
+                type="button"
+                class="text-button"
+                :disabled="!!saving || query.data.value?.embedding.source !== 'custom'"
+                @click="save('embedding', true)"
+              >
+                <RotateCcw :size="13" /> 恢复环境配置</button
+              ><button class="button primary" :disabled="!!saving">
+                <Save :size="14" />{{ saving === 'embedding' ? '保存中…' : '保存 Embedding' }}
+              </button>
+            </div>
           </div>
-          <div class="model-actions">
-            <button
-              type="button"
-              class="text-button"
-              :disabled="!!saving || query.data.value?.embedding.source !== 'custom'"
-              @click="save('embedding', true)"
-            >
-              <RotateCcw :size="13" /> 恢复环境配置</button
-            ><button class="button primary" :disabled="!!saving">
-              <Save :size="14" />{{ saving === 'embedding' ? '保存中…' : '保存 Embedding' }}
-            </button>
-          </div>
-        </div>
-      </form>
+        </form>
+      </div>
+      <p class="settings-footnote">
+        保存仅更新连接配置，不会向服务商发送请求。模型服务需支持相应接口能力；“已配置”不代表远端连通性已验证。
+      </p>
+      <UsersPanel />
+    </template>
+    <div v-else class="card permission-note">
+      <span class="stat-icon blue"><Lock :size="20" /></span>
+      <div>
+        <strong>模型设置仅管理员可修改</strong>
+        <p>当前账号可以正常问答、检索和查看资料；如需调整模型或管理账号，请使用管理员账号登录。</p>
+      </div>
     </div>
-    <p class="settings-footnote">
-      保存仅更新连接配置，不会向服务商发送请求。模型服务需支持相应接口能力；“已配置”不代表远端连通性已验证。
-    </p>
   </div>
 </template>
+<style scoped>
+.permission-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 22px 24px;
+}
+.permission-note strong {
+  display: block;
+  margin-bottom: 4px;
+}
+.permission-note p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+</style>

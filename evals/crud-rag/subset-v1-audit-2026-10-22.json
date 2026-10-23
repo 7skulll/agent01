@@ -1,0 +1,148 @@
+{
+  "notice": "已知配套新闻覆盖，不是完整召回率或其下界；排除版本仅为离线重算。",
+  "excluded_case_ids": [
+    "crud-140afb2a81ce7b224b6a6845"
+  ],
+  "configs": {
+    "keyword": {
+      "original_first_10_chunks": {
+        "queries": 42,
+        "chunk_limit": 10,
+        "known_source_coverage": 0.9523809523809523,
+        "all_known_sources_found": 37,
+        "failed": 0
+      },
+      "reviewed_first_10_chunks": {
+        "queries": 41,
+        "chunk_limit": 10,
+        "known_source_coverage": 0.967479674796748,
+        "all_known_sources_found": 37,
+        "failed": 0
+      },
+      "historical_three_doc_full": {
+        "found": 10,
+        "total": 14
+      }
+    },
+    "vector": {
+      "original_first_10_chunks": {
+        "queries": 42,
+        "chunk_limit": 10,
+        "known_source_coverage": 0.9841269841269841,
+        "all_known_sources_found": 41,
+        "failed": 0
+      },
+      "reviewed_first_10_chunks": {
+        "queries": 41,
+        "chunk_limit": 10,
+        "known_source_coverage": 1.0,
+        "all_known_sources_found": 41,
+        "failed": 0
+      },
+      "historical_three_doc_full": {
+        "found": 13,
+        "total": 14
+      }
+    },
+    "hybrid": {
+      "original_first_10_chunks": {
+        "queries": 42,
+        "chunk_limit": 10,
+        "known_source_coverage": 0.9841269841269841,
+        "all_known_sources_found": 40,
+        "failed": 0
+      },
+      "reviewed_first_10_chunks": {
+        "queries": 41,
+        "chunk_limit": 10,
+        "known_source_coverage": 0.991869918699187,
+        "all_known_sources_found": 40,
+        "failed": 0
+      },
+      "historical_three_doc_full": {
+        "found": 12,
+        "total": 14
+      }
+    },
+    "hybrid-rerank": {
+      "original_first_10_chunks": {
+        "queries": 42,
+        "chunk_limit": 10,
+        "known_source_coverage": 0.9920634920634921,
+        "all_known_sources_found": 41,
+        "failed": 0
+      },
+      "reviewed_first_10_chunks": {
+        "queries": 41,
+        "chunk_limit": 10,
+        "known_source_coverage": 1.0,
+        "all_known_sources_found": 41,
+        "failed": 0
+      },
+      "historical_three_doc_full": {
+        "found": 14,
+        "total": 14
+      }
+    }
+  },
+  "artifacts": [
+    {
+      "path": "keyword-development-1.json",
+      "sha256": "34e763e7edd83e18dc610dbac96dfa985da00facd0be2b52a64b25b7d0aa8144"
+    },
+    {
+      "path": "keyword-development-2.json",
+      "sha256": "a16a4d2a98aca988d0445c33a19f1179d61339a4438ce5d20a41330aad89debf"
+    },
+    {
+      "path": "keyword-development-3.json",
+      "sha256": "c05ebd6c5803b8701a523be5df98142fdef982dd6215948023af75fa36e32d1f"
+    },
+    {
+      "path": "vector-development-1.json",
+      "sha256": "c67242b7a48ee75d9d576ee4e955915e69a11d086a7082eadee3289dd76ec8ec"
+    },
+    {
+      "path": "vector-development-2.json",
+      "sha256": "c9e0fafd794075c0a2fd792938b46f66732cd811892a11c55da8ac5671092395"
+    },
+    {
+      "path": "vector-development-3.json",
+      "sha256": "a1488ffe31924728dbc5f30b42cf96c362ea71b8bc65ae185959ae279e6269ae"
+    },
+    {
+      "path": "hybrid-development-1.json",
+      "sha256": "996f69fb4461560cf950bdcde87a8445b09765511f485a7bd1e0907aa5825bf8"
+    },
+    {
+      "path": "hybrid-development-2.json",
+      "sha256": "36a89eccb501d0987f203bfeb82609b56f9e0a5d541b631cc6fe3cebc9871592"
+    },
+    {
+      "path": "hybrid-development-3.json",
+      "sha256": "d5a30d7327908ff0887840dec5f2d7d9349a2bdf54b037010117413d7d33cb65"
+    },
+    {
+      "path": "hybrid-rerank-development-1.json",
+      "sha256": "89884bf3f941a00e782f962260f7fa244a8b970df8f39bfc3e7f3800119c0c99"
+    },
+    {
+      "path": "hybrid-rerank-development-2.json",
+      "sha256": "8f3148c6ee559a0d39cd19fa8efabcf0886b15fa64607181700938a63f739d28"
+    },
+    {
+      "path": "hybrid-rerank-development-3.json",
+      "sha256": "a1648a0f1fc8a4a8d650e4a9de59a146529fccb303bf832a42df333e68edb49b"
+    }
+  ],
+  "rag_execution": {
+    "first_attempt": {
+      "completed": 2,
+      "failed": 2
+    },
+    "separate_retry": {
+      "completed": 1
+    },
+    "notice": "completed 仅表示执行完成，不表示事实正确或人工通过。"
+  }
+}

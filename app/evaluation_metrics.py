@@ -26,6 +26,8 @@ def retrieval_metrics(sources, relevant, k):
         "relevant_total": len(gold),
         "returned_files": len(ranked),
         "k": k,
+        "ranking_unit": "unique_file_within_returned_chunks",
+        "returned_chunks": len(sources),
     }
 
 

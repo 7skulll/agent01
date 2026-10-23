@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import {
@@ -10,13 +10,19 @@ import {
   ArrowUpRight,
   Menu,
   BookOpen,
-  Command,
   Settings2,
+  LogOut,
+  UserRound,
 } from 'lucide-vue-next'
 import { api } from './api/client'
 import KnowledgeBasePicker from './components/KnowledgeBasePicker.vue'
+import LoginView from './views/LoginView.vue'
+import ErrorBanner from './components/ErrorBanner.vue'
+import { auth, bootstrap, isAdmin, logout, role, setupRequired } from './features/auth/store'
+import { roleLabels } from './api/types'
 const route = useRoute()
 const mobile = ref(false)
+onMounted(bootstrap)
 const health = useQuery({ queryKey: ['health'], queryFn: api.health, refetchInterval: 30000 })
 const section = computed(() =>
   route.path.startsWith('/knowledge')
@@ -27,15 +33,28 @@ const section = computed(() =>
         ? '检索调试'
         : '问答工作台',
 )
-const nav = [
+const navItems = [
   { path: '/chat', name: '问答工作台', icon: MessageSquare, hint: '01' },
   { path: '/knowledge', name: '知识库文件', icon: FolderOpen, hint: '02' },
   { path: '/retrieval', name: '检索调试', icon: ScanSearch, hint: '03' },
   { path: '/settings', name: '模型设置', icon: Settings2, hint: '04' },
 ]
+const nav = computed(() => navItems.filter((item) => item.path !== '/settings' || isAdmin.value))
+const roleName = computed(() => (role.value ? roleLabels[role.value] : '成员'))
+async function signOut() {
+  await logout()
+}
 </script>
 <template>
-  <div class="app-shell">
+  <div v-if="!auth.ready" class="boot-screen">
+    <span class="dot online"></span>正在检查登录状态…
+  </div>
+  <div v-else-if="auth.error" class="boot-screen">
+    <ErrorBanner :error="auth.error" />
+    <button class="button" @click="bootstrap">重新连接</button>
+  </div>
+  <LoginView v-else-if="setupRequired || !auth.user" />
+  <div v-else class="app-shell">
     <aside class="sidebar" :class="{ 'is-open': mobile }">
       <RouterLink to="/chat" class="brand" @click="mobile = false"
         ><span class="brand-mark"><Layers :size="23" /></span
@@ -62,8 +81,19 @@ const nav = [
         /></RouterLink>
       </div>
       <div class="sidebar-footer">
-        <span class="avatar"><Command :size="16" /></span>
-        <div>知序工作空间<small>资料驱动 · 清晰有据</small></div>
+        <span class="avatar"><UserRound :size="16" /></span>
+        <div class="footer-copy">
+          <strong>{{ auth.user.display_name }}</strong>
+          <small>{{ roleName }}</small>
+        </div>
+        <button
+          class="icon-button footer-logout"
+          aria-label="退出登录"
+          title="退出登录"
+          @click="signOut"
+        >
+          <LogOut :size="16" />
+        </button>
         <span class="dot" :class="{ online: health.isSuccess.value }"></span>
       </div>
     </aside>
@@ -89,7 +119,48 @@ const nav = [
           ><span class="topbar-divider"></span><KnowledgeBasePicker />
         </div>
       </header>
-      <main><RouterView /></main>
+      <main>
+        <RouterView v-slot="{ Component }">
+          <Transition name="page" mode="out-in">
+            <component :is="Component" :key="route.matched[0]?.path" />
+          </Transition>
+        </RouterView>
+      </main>
     </div>
   </div>
 </template>
+<style scoped>
+.boot-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.footer-copy {
+  min-width: 0;
+  line-height: 1.25;
+}
+.footer-copy strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.footer-copy small {
+  color: #849f8d;
+  font-size: 10px;
+}
+.footer-logout {
+  margin-left: auto;
+  color: #8fa690;
+}
+.footer-logout:hover {
+  background: #263e32;
+  color: #f0f4e9;
+}
+</style>

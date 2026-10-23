@@ -3,18 +3,19 @@
 import json
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response
 
 from app.errors import ChatError
 from app.evaluation_comparison import compare
 from app.evaluation_models import ArchiveRequest, CaseSetRequest, EvalRequest, RetryRequest, Review
 from app.evaluation_quality import markdown_report
+from app.users import require_staff
 
 router = APIRouter(prefix="/api/v1/evaluations", tags=["evaluations"])
 
 
-@router.post("", status_code=202)
+@router.post("", status_code=202, dependencies=[Depends(require_staff)])
 async def create_evaluation(body: EvalRequest, request: Request):
     return await request.app.state.evaluations.create(body)
 
@@ -44,16 +45,17 @@ async def evaluation_capabilities(request: Request):
         "default_context_tokens": runtime.settings.rag_context_tokens,
         "rerank_available": request.app.state.retrieval_service.reranker is not None
         and runtime.settings.retrieval_rerank_weight > 0,
+        "ragas_available": request.app.state.evaluation_judge.available,
     }
 
 
-@router.post("/case-sets", status_code=201)
+@router.post("/case-sets", status_code=201, dependencies=[Depends(require_staff)])
 async def save_case_set(body: CaseSetRequest, request: Request):
     return await request.app.state.evaluations.save_case_set(body)
 
 
 @router.get("/case-sets")
-async def list_case_sets(request: Request, knowledge_base_id: str):
+async def list_case_sets(request: Request, knowledge_base_id: str | None = None):
     return await request.app.state.evaluations.case_sets(knowledge_base_id)
 
 
@@ -65,6 +67,66 @@ async def get_case_set(case_set_id: UUID, request: Request):
 @router.get("/corpus")
 async def evaluation_corpus(request: Request, knowledge_base_id: str):
     return await request.app.state.evaluations.corpus_files(knowledge_base_id)
+
+
+@router.get("/gate")
+async def regression_gate(
+    request: Request,
+    baseline: UUID,
+    candidate: UUID,
+    max_recall_drop: float = Query(default=0.02, ge=0, le=1),
+    max_mrr_drop: float = Query(default=0.02, ge=0, le=1),
+    max_answer_drop: float = Query(default=0.05, ge=0, le=1),
+):
+    service = request.app.state.evaluations
+    comparison = compare(await service.row(str(baseline)), await service.row(str(candidate)))
+    checks = []
+
+    def add(name, delta, threshold, source):
+        checks.append(
+            {
+                "name": name,
+                "source": source,
+                "delta": delta,
+                "max_drop": threshold,
+                "status": "unscored"
+                if delta is None
+                else "pass"
+                if delta >= -threshold
+                else "fail",
+            }
+        )
+
+    add("召回率", comparison["metric_delta"].get("recall"), max_recall_drop, "retrieval")
+    add("MRR", comparison["metric_delta"].get("mrr"), max_mrr_drop, "retrieval")
+    for key, label in (
+        ("faithfulness", "忠实度"),
+        ("answer_relevancy", "答案相关性"),
+        ("correctness", "正确性"),
+        ("completeness", "完整性"),
+    ):
+        item = (comparison.get("answer_metrics") or {}).get(key) or {}
+        add(label, item.get("delta"), max_answer_drop, "answer")
+    statuses = {check["status"] for check in checks}
+    if "fail" in statuses:
+        status = "fail"
+    elif "unscored" in statuses:
+        status = "unscored"
+    else:
+        status = "pass"
+    return {
+        "status": status,
+        "left_id": comparison["left_id"],
+        "right_id": comparison["right_id"],
+        "counts": comparison["counts"],
+        "checks": checks,
+        "thresholds": {
+            "max_recall_drop": max_recall_drop,
+            "max_mrr_drop": max_mrr_drop,
+            "max_answer_drop": max_answer_drop,
+        },
+        "notice": "门禁基于同一案例与标注版本的配对差值；未评分不等于通过。",
+    }
 
 
 @router.get("/compare")
@@ -80,12 +142,14 @@ async def get_evaluation(
     return await request.app.state.evaluations.row(str(evaluation_id), tag)
 
 
-@router.post("/{evaluation_id}/stop")
+@router.post("/{evaluation_id}/stop", dependencies=[Depends(require_staff)])
 async def stop_evaluation(evaluation_id: UUID, request: Request):
     return await request.app.state.evaluations.stop(str(evaluation_id))
 
 
-@router.patch("/{evaluation_id}/reviews/{index}")
+@router.patch(
+    "/{evaluation_id}/reviews/{index}", dependencies=[Depends(require_staff)]
+)
 async def review_evaluation(evaluation_id: UUID, index: int, body: Review, request: Request):
     service = request.app.state.evaluations
     async with service.lock:
@@ -118,7 +182,7 @@ async def retry_plan(evaluation_id: UUID, request: Request):
     return service.retry_plan(await service.row(str(evaluation_id)))
 
 
-@router.post("/{evaluation_id}/retry", status_code=202)
+@router.post("/{evaluation_id}/retry", status_code=202, dependencies=[Depends(require_staff)])
 async def retry_evaluation(evaluation_id: UUID, body: RetryRequest, request: Request):
     service = request.app.state.evaluations
     async with service.database.read():
@@ -145,12 +209,12 @@ async def retry_evaluation(evaluation_id: UUID, body: RetryRequest, request: Req
     return await service.create(EvalRequest.model_validate(payload))
 
 
-@router.patch("/{evaluation_id}/archive")
+@router.patch("/{evaluation_id}/archive", dependencies=[Depends(require_staff)])
 async def archive_evaluation(evaluation_id: UUID, body: ArchiveRequest, request: Request):
     return await request.app.state.evaluations.manage(str(evaluation_id), archived=body.archived)
 
 
-@router.delete("/{evaluation_id}")
+@router.delete("/{evaluation_id}", dependencies=[Depends(require_staff)])
 async def delete_evaluation(evaluation_id: UUID, request: Request):
     return await request.app.state.evaluations.manage(str(evaluation_id), delete=True)
 

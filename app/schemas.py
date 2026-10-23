@@ -61,6 +61,7 @@ class EvaluationOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
     rerank: Literal["inherit", "on", "off"] = "inherit"
     context_tokens: int | None = Field(default=None, ge=256, le=8192)
+    judge: Literal["none", "ragas"] = "none"
 
 
 class RunRequest(BaseModel):

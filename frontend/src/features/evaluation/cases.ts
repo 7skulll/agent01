@@ -5,6 +5,7 @@ export const blankCase = (): EvalCase => ({
   expected: 'unlabelled',
   relevant_file_ids: [],
   required_facts: '',
+  reference_answer: '',
   judgment_scope: 'full',
   negative_file_ids: [],
   tags: [],
@@ -42,7 +43,8 @@ export function parseCases(data: unknown): EvalCase[] {
       !text(c.query, 1, 4000) ||
       !['unlabelled', 'answerable', 'unanswerable'].includes(c.expected) ||
       !['full', 'partial'].includes(c.judgment_scope!) ||
-      !text(c.required_facts, 0, 2000)
+      !text(c.required_facts, 0, 2000) ||
+      !text(c.reference_answer || '', 0, 4000)
     )
       throw new Error('问题、预期或标注范围格式无效。')
     const positive = strings(c.relevant_file_ids, 100, 128)

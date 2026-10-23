@@ -5,7 +5,7 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 import psycopg
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
@@ -16,6 +16,7 @@ from app.rag.embedding import build_embedding_model
 from app.rag.retrieval import RetrievalService
 from app.rag.vectors import VectorService
 from app.runs import complete_on_cancel
+from app.users import require_admin
 
 router = APIRouter(prefix="/api/v1/settings/models", tags=["model-settings"])
 Kind = Literal["llm", "embedding"]
@@ -211,17 +212,6 @@ class ModelSettingsService:
                     index.files, index.index, settings, embedding, metrics=state.metrics
                 )
             )
-            if kind == "embedding" and embedding is not None:
-                try:
-                    await state.retrieval_service.vectors.ensure_hnsw(
-                        vector.version, settings.embedding_dim or embedding.dim or 0
-                    )
-                except ValueError:
-                    raise ChatError(
-                        "invalid_embedding_index",
-                        "HNSW 需要 pgvector >= 0.8 且明确配置 1–2000 维；请检查维度或使用 exact。",
-                        422,
-                    ) from None
             old_vector = state.vector_service.version
             try:
                 async with self.database.transaction():
@@ -258,25 +248,25 @@ class ModelSettingsService:
             return self.info(kind == "embedding" and old_vector != vector.version)
 
 
-@router.get("", response_model=ModelsInfo)
+@router.get("", response_model=ModelsInfo, dependencies=[Depends(require_admin)])
 async def get_models(request: Request, response: Response):
     response.headers["Cache-Control"] = "no-store"
     return request.app.state.model_settings.info()
 
 
-@router.put("/llm", response_model=ModelsInfo)
+@router.put("/llm", response_model=ModelsInfo, dependencies=[Depends(require_admin)])
 async def save_llm(body: LLMInput, request: Request, response: Response):
     response.headers["Cache-Control"] = "no-store"
     return await request.app.state.model_settings.save("llm", body)
 
 
-@router.put("/embedding", response_model=ModelsInfo)
+@router.put("/embedding", response_model=ModelsInfo, dependencies=[Depends(require_admin)])
 async def save_embedding(body: EmbeddingInput, request: Request, response: Response):
     response.headers["Cache-Control"] = "no-store"
     return await request.app.state.model_settings.save("embedding", body)
 
 
-@router.delete("/{kind}", response_model=ModelsInfo)
+@router.delete("/{kind}", response_model=ModelsInfo, dependencies=[Depends(require_admin)])
 async def reset_model(kind: Kind, request: Request, response: Response):
     response.headers["Cache-Control"] = "no-store"
     return await request.app.state.model_settings.save(kind)

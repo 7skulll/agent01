@@ -40,6 +40,41 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/v1/**', async (route) => {
     const url = new URL(route.request().url()),
       path = url.pathname
+    if (path.endsWith('/auth/status')) {
+      await route.fulfill({
+        json: {
+          has_users: true,
+          setup_required: false,
+          registration_enabled: false,
+          password_min_length: 8,
+        },
+      })
+      return
+    }
+    if (path.endsWith('/auth/me')) {
+      await route.fulfill({
+        json: {
+          user: {
+            user_id: 'local',
+            username: 'local',
+            display_name: '本地管理员',
+            role: 'admin',
+            is_active: true,
+            created_at: '',
+            updated_at: '',
+            anonymous: true,
+            service: false,
+          },
+          permissions: {
+            ingest_files: true,
+            manage_knowledge_bases: true,
+            manage_models: true,
+            manage_users: true,
+          },
+        },
+      })
+      return
+    }
     if (path.endsWith('/knowledge-bases')) {
       await route.fulfill({ json: defaultBases })
       return
@@ -329,6 +364,41 @@ test('SSE reconnect resumes cursor and replaces drafts with the durable answer',
   await page.route('**/api/v1/**', async (route) => {
     const url = new URL(route.request().url()),
       path = url.pathname
+    if (path.endsWith('/auth/status')) {
+      await route.fulfill({
+        json: {
+          has_users: true,
+          setup_required: false,
+          registration_enabled: false,
+          password_min_length: 8,
+        },
+      })
+      return
+    }
+    if (path.endsWith('/auth/me')) {
+      await route.fulfill({
+        json: {
+          user: {
+            user_id: 'local',
+            username: 'local',
+            display_name: '本地管理员',
+            role: 'admin',
+            is_active: true,
+            created_at: '',
+            updated_at: '',
+            anonymous: true,
+            service: false,
+          },
+          permissions: {
+            ingest_files: true,
+            manage_knowledge_bases: true,
+            manage_models: true,
+            manage_users: true,
+          },
+        },
+      })
+      return
+    }
     if (path.endsWith('/knowledge-bases')) {
       await route.fulfill({ json: defaultBases })
       return
@@ -378,6 +448,41 @@ test('retrying an uncertain submission keeps the same idempotency key', async ({
   let complete = false
   await page.route('**/api/v1/**', async (route) => {
     const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/auth/status')) {
+      await route.fulfill({
+        json: {
+          has_users: true,
+          setup_required: false,
+          registration_enabled: false,
+          password_min_length: 8,
+        },
+      })
+      return
+    }
+    if (path.endsWith('/auth/me')) {
+      await route.fulfill({
+        json: {
+          user: {
+            user_id: 'local',
+            username: 'local',
+            display_name: '本地管理员',
+            role: 'admin',
+            is_active: true,
+            created_at: '',
+            updated_at: '',
+            anonymous: true,
+            service: false,
+          },
+          permissions: {
+            ingest_files: true,
+            manage_knowledge_bases: true,
+            manage_models: true,
+            manage_users: true,
+          },
+        },
+      })
+      return
+    }
     if (path.endsWith('/knowledge-bases')) {
       await route.fulfill({ json: defaultBases })
       return

@@ -7,12 +7,12 @@ from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.types import interrupt
-from openai import APIError
+from openai import APIError, LengthFinishReasonError
 from pydantic import ValidationError
 
 from app.agent.prompt import SYSTEM_PROMPT
 from app.agent.validation import complete_messages, validate_model_message
-from app.errors import ChatError, upstream_error
+from app.errors import ChatError, truncated_response, upstream_error
 from app.rag.answer_protocol import (
     ANSWER_PROTOCOL,
     invalid,
@@ -235,6 +235,24 @@ def build_run_graph(runtime, repository):
         try:
             with runtime.metrics.span("citation_repair" if repair else "answer_model"):
                 message = await model.ainvoke(messages, config=config)
+        except LengthFinishReasonError:
+            # SDK can raise before returning an AIMessage; do not silently retry a fixed cap.
+            emit(
+                "token_usage",
+                {
+                    "stage": stage,
+                    "attempt_id": attempt,
+                    "is_repair": repair,
+                    "repair_attempt": int(repair),
+                    "finish_reason": "length",
+                    "error_code": "model_response_truncated",
+                    "actual": None,
+                    "estimated_input_tokens": estimated,
+                    "tokenizer": runtime.counter.name,
+                    "duration_ms": round((time.perf_counter() - model_started) * 1000, 2),
+                },
+            )
+            raise truncated_response() from None
         except APIError as exc:
             if not repair:
                 raise
@@ -252,6 +270,10 @@ def build_run_graph(runtime, repository):
             "token_usage",
             {
                 "stage": stage,
+                "attempt_id": attempt,
+                "is_repair": repair,
+                "repair_attempt": int(repair),
+                "finish_reason": message.response_metadata.get("finish_reason"),
                 "duration_ms": round((time.perf_counter() - model_started) * 1000, 2),
                 "estimated_input_tokens": estimated,
                 "tokenizer": runtime.counter.name,
@@ -275,15 +297,26 @@ def build_run_graph(runtime, repository):
         message = state["rag_raw_message"]
         if not isinstance(message, AIMessage):
             raise ChatError("invalid_model_response", "模型未返回有效回答。", 502)
-        validate_model_message(message)
         try:
+            validate_model_message(message)
             if message.tool_calls:
                 raise invalid("invalid_answer_schema")
             payload = parse_answer(message.text, state["rag_sources"])
         except ChatError as exc:
             runtime.metrics.increment("citation_validation", outcome="error", reason=exc.code)
-            emit("answer_validation", {"valid": False, "error_code": exc.code})
-            if state.get("rag_repair_used"):
+            emit(
+                "answer_validation",
+                {
+                    "valid": False,
+                    "error_code": exc.code,
+                    "is_repair": bool(state.get("rag_repair_used")),
+                    **({"diagnostics": exc.diagnostics} if exc.diagnostics else {}),
+                },
+            )
+            if state.get("rag_repair_used") or exc.code not in (
+                "invalid_answer_schema",
+                "invalid_citations",
+            ):
                 raise
             return {"rag_validation_error": exc.code, "rag_raw_message": None}
         outcome = render_answer(payload, state["rag_sources"])

@@ -58,13 +58,13 @@ class AnswerPayload(BaseModel):
         return self
 
 
-def invalid(code):
+def invalid(code, diagnostics=None):
     message = (
         "模型使用了无效的资料来源关联。"
         if code == "invalid_citations"
         else "模型未返回有效的结构化回答。"
     )
-    return ChatError(code, message, 502)
+    return ChatError(code, message, 502, diagnostics=diagnostics)
 
 
 def unique_object(pairs):
@@ -86,13 +86,31 @@ def parse_answer(text, sources):
     try:
         value = json.loads(text, object_pairs_hook=unique_object, parse_constant=invalid_constant)
         answer = AnswerPayload.model_validate(value)
+    except json.JSONDecodeError as exc:
+        raise invalid(
+            "invalid_answer_schema",
+            {
+                "validation_kind": "invalid_json",
+                "line": exc.lineno,
+                "column": exc.colno,
+                "offset": exc.pos,
+            },
+        ) from None
     except ValidationError as exc:
         code = (
             "invalid_citations"
             if any("source_ids" in error["loc"] for error in exc.errors())
             else "invalid_answer_schema"
         )
-        raise invalid(code) from None
+        # Never include raw model output, user text, or Pydantic input/context in diagnostics.
+        raise invalid(
+            code,
+            {
+                "validation_kind": "schema",
+                "error_types": sorted({error["type"] for error in exc.errors()}),
+                "error_count": exc.error_count(),
+            },
+        ) from None
     except (ValueError, TypeError, RecursionError):
         raise invalid("invalid_answer_schema") from None
     allowed = {source["citation_id"] for source in sources}

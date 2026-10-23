@@ -7,12 +7,15 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from app.agent.runtime import AgentRuntime
-from app.auth import BearerTokenMiddleware
+from app.auth import UserAuthMiddleware
+from app.auth_api import router as auth_router
+from app.auth_api import users_router
 from app.config import Settings
 from app.conversations import ConversationNotFoundError, ConversationRepository
 from app.database import Database
 from app.errors import ChatError
 from app.evaluation_api import router as evaluation_router
+from app.evaluation_ragas import RagasJudge
 from app.evaluations import EvaluationService
 from app.http_errors import ErrorResponse, register_error_handlers
 from app.knowledge_bases import KnowledgeBaseService
@@ -40,6 +43,7 @@ from app.schemas import (
     ConversationUpdate,
     HealthResponse,
 )
+from app.users import AuthService
 
 router = APIRouter(prefix="/api/v1")
 
@@ -101,9 +105,11 @@ def create_app(
     chat_model: BaseChatModel | None = None,
     embedding_model: EmbeddingModel | None = None,
     reranker: Reranker | None = None,
+    evaluation_judge=None,
 ) -> FastAPI:
     settings = settings or Settings()
     metrics = Metrics()
+    auth = AuthService(settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -118,7 +124,9 @@ def create_app(
             database.pool,
         ):
             await database.setup()
+            auth.bind(database)
             async with database.worker_ownership():
+                await auth.bootstrap()
                 overrides = await read_overrides(database)
                 active_settings = effective_settings(settings, overrides)
                 app.state.embedding_model = (
@@ -134,7 +142,7 @@ def create_app(
                 storage = LocalStorage(settings.file_storage_path)
                 app.state.file_service = FileService(file_repository, storage)
                 index_repository = IndexRepository(database)
-                vectors = VectorRepository(database, settings)
+                vectors = VectorRepository(database)
                 lexical = LexicalIndex(database)
                 vector_service = VectorService(
                     file_repository,
@@ -143,11 +151,6 @@ def create_app(
                     app.state.embedding_model,
                     metrics=metrics,
                 )
-                if app.state.embedding_model is not None:
-                    await vectors.ensure_hnsw(
-                        vector_service.version,
-                        active_settings.embedding_dim or app.state.embedding_model.dim or 0,
-                    )
                 app.state.vector_service = vector_service
                 app.state.lexical_index = lexical
                 app.state.retrieval_service = RetrievalService(
@@ -200,6 +203,9 @@ def create_app(
                         app, database, settings, overrides
                     )
                     app.state.evaluations = EvaluationService(app, database)
+                    app.state.evaluation_judge = evaluation_judge or RagasJudge(
+                        app.state.runtime
+                    )
                     await app.state.evaluations.setup()
                     try:
                         yield
@@ -220,11 +226,8 @@ def create_app(
     )
     register_error_handlers(app)
     # Middleware is applied outside-in in reverse insertion order: metrics wraps CORS,
-    # which wraps the optional bearer gate. Preflight requests are answered by CORS first.
-    app.add_middleware(
-        BearerTokenMiddleware,
-        token=settings.api_token.get_secret_value().strip(),
-    )
+    # which wraps the user-session gate. Preflight requests are answered by CORS first.
+    app.add_middleware(UserAuthMiddleware, auth=auth)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -234,8 +237,11 @@ def create_app(
         allow_headers=["*"],
     )
     app.state.metrics = metrics
+    app.state.auth = auth
     app.add_middleware(MetricsMiddleware, metrics=metrics)
     app.include_router(router)
+    app.include_router(auth_router)
+    app.include_router(users_router)
     app.include_router(run_router)
     app.include_router(file_router)
     app.include_router(knowledge_base_router)

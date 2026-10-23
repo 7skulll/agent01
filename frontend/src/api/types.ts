@@ -12,6 +12,24 @@ export type Turns = Omit<Schema['ConversationTurns'], 'items'> & { items: Run[] 
 export type FileItem = Schema['FileSummary']
 export type FileList = Schema['FileListResponse']
 export type Health = Schema['HealthResponse']
+export type AuthUser = Schema['User']
+export type AuthStatus = Schema['AuthStatus']
+export type AuthSession = Schema['SessionInfo']
+export type AuthLogin = Schema['LoginResponse']
+export type Permissions = Schema['Permissions']
+export type UserCreate = Schema['UserCreate']
+export type UserUpdate = Schema['UserUpdate']
+export type Role = 'admin' | 'staff' | 'viewer'
+export const roleLabels: Record<Role, string> = {
+  admin: '管理员',
+  staff: '员工',
+  viewer: '普通用户',
+}
+export const roleDescriptions: Record<Role, string> = {
+  admin: '全部权限，包含用户管理与模型配置',
+  staff: '可上传/删除文件、构建索引和管理知识库',
+  viewer: '只读：问答、检索与查看资料',
+}
 type GeneratedSource = Schema['Source']
 export type Source = Omit<
   GeneratedSource,

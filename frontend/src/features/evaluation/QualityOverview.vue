@@ -6,6 +6,7 @@ const labels: Record<string, string> = {
   fact_coverage: '必要事实完整覆盖',
   unsupported_claims: '存在无依据事实',
   conditions: '条件与例外正确',
+  answer_relevancy: '答案直接回应问题',
   citation_support: '引用完整支持',
   refusal: '人工拒答判断正确',
 }
