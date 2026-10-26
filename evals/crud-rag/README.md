@@ -142,3 +142,27 @@ uv run python -m scripts.audit_crud_results --folder data/crud-rag/runs/2026-10-
 没有自动修改工作台既有案例集；需要导入修订版时显式指定新目录，按上面的独立知识库流程操作。
 新的后端代码让检索与问答按相同候选片段预算取数，输出中保留请求片段上限与文件排名单位；
 代码需要由新的后端进程加载，不会回写历史实验结果。
+
+## 2026-10-26 按主题拆分知识库
+
+原来的 `CRUD-RAG-60-v1` 把 60 道题的配套新闻和 100 篇无关事件新闻混在一个库里，跨领域
+检索的精度和可解释性都差。现已按新闻领域拆成 7 个知识库，原库清空并归档：
+
+`CRUD-国际时事`、`CRUD-金融与产业经济`、`CRUD-社会民生与文体`、`CRUD-政务与法治`、
+`CRUD-生态环保与水利`、`CRUD-科技与数字产业`、`CRUD-农业与乡村振兴`。
+
+```bash
+uv run python -m scripts.split_crud_knowledge_base plan    # 预演，不改数据
+uv run python -m scripts.split_crud_knowledge_base apply --apply
+uv run python -m scripts.split_crud_knowledge_base verify  # 复核证据文档是否都在本库
+```
+
+- 主题由首段关键词判定，人工复核的例外写在脚本的 `OVERRIDES` 里，可继续追加。
+- 文件是移动而不是复制：`files`/`chunks`/`chunk_terms` 的 `kb_id` 与 `files.storage_path`
+  在同一个事务里更新，向量与全文索引随文件走，不需要重建，也不产生新增模型费用。
+- 案例主题取证据文档多数票，所以每道题的证据一定与案例同库；有 7 篇文档因此被带进了
+  另一主题的库。
+- 每个主题库各有 `CRUD-Development-v1`（partial、draft）与 `CRUD-Acceptance-v1`
+  （full、verified + frozen，仅 5 个库有验收题）。拆分前的记录只归档不删除。
+- 拆分后文档规模从 220 降到 6–57，拆分前的 precision/recall 与新库结果不可直接比较，
+  需要重新跑基线。

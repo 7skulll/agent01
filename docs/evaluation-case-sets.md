@@ -1,35 +1,70 @@
 # RAG 测评集清单与整理结果
 
-更新：2026-10-26。数据来自当前业务库的 `evaluation_case_sets`，已完成归档、新增验收集和知识库归档。
+更新：2026-10-26，包含同日的 CRUD 语料主题拆分。数据来自当前业务库的 `evaluation_case_sets`。
 
-备份与审计：
+## CRUD 主题拆分（2026-10-26）
 
-- [case-sets.json](../evals/case-sets/2026-10-26/case-sets.json)：12 条记录的完整案例、语料、指纹、引用数和 `archived` 状态。
+`CRUD-RAG-60-v1` 原来把 60 道题的配套新闻与 100 篇无关事件新闻放在同一个库，跨领域检索的
+精度和可解释性都差。现在按新闻领域拆成 7 个知识库，原库归档、文件全部迁出：
+
+| 知识库 | 文档 | 切片 | 案例 |
+| --- | ---: | ---: | ---: |
+| `CRUD-国际时事` | 57 | 101 | 15 |
+| `CRUD-金融与产业经济` | 55 | 92 | 17 |
+| `CRUD-社会民生与文体` | 44 | 92 | 10 |
+| `CRUD-政务与法治` | 33 | 68 | 7 |
+| `CRUD-生态环保与水利` | 18 | 30 | 7 |
+| `CRUD-科技与数字产业` | 7 | 12 | 2 |
+| `CRUD-农业与乡村振兴` | 6 | 8 | 2 |
+
+合计 220 篇文档、403 个切片、60 道题，与拆分前一致；向量与全文索引随文件迁移，不需要重建。
+
+规则与复现：
+
+- 工具：`scripts/split_crud_knowledge_base.py`，`plan` 预演、`apply --apply` 写入、`verify` 复核。
+- 主题按首段关键词判定，人工复核的例外记在脚本的 `OVERRIDES` 里。
+- 案例主题取证据文档的多数票，文档归属再取引用它的案例的多数票，因此每道题的证据文档
+  一定与案例同库。有 7 篇文档因此被带进了另一主题的库，这是有意的取舍。
+- 旧测评集（4 个批次的 development 与 `CRUD-Acceptance-v1`）已合并重建为每个库两套：
+  `CRUD-Development-v1`（partial、draft）与 `CRUD-Acceptance-v1`（full、verified + frozen）。
+  原记录只归档不删除，历史评测仍可按 ID 读取。
+- 本次导出：[case-sets.json](../evals/case-sets/2026-10-26-topic-split/case-sets.json)、
+  [summary.csv](../evals/case-sets/2026-10-26-topic-split/summary.csv)。
+
+拆分后的实际影响需要重新跑一次基线：文档数从 220 降到 6–57，precision 会明显变化，
+与拆分前的历史结果不可直接比较。
+
+## 当前结论
+
+- **24 条测评集记录**，分布在 **10 个知识库**；其中 **15 条未归档**、9 条已归档。
+- 未归档记录覆盖合成语料 3 套、CRUD 主题库 12 套。
+- 已归档的 9 条：`CRUD-RAG-reviewed-v1` 四批、`CRUD-RAG-60-v1` 拆分前的四个开发批与
+  `CRUD-Acceptance-v1`。`CRUD-RAG-60-v1` 已清空并归档，`CRUD-RAG-reviewed-v1` 本就归档。
+- 验收集：`Synthetic-Acceptance-v1`（15 题），以及各主题库重建的 `CRUD-Acceptance-v1`（1–7 题）。
+- 下表的「主从关系」是拆分前的状态，保留作历史对照。
+
+导出与审计（拆分前快照 12 条记录）：
+
+- [case-sets.json](../evals/case-sets/2026-10-26/case-sets.json)：完整案例、语料、指纹、引用数和 `archived` 状态。
 - [summary.csv](../evals/case-sets/2026-10-26/summary.csv)：一行一套的汇总表。
 
 重新导出：
 
 ```bash
-uv run python -m scripts.export_evaluation_case_sets
+uv run python -m scripts.export_evaluation_case_sets --output 目标目录
 ```
 
-## 当前结论
-
-- **12 条测评集记录**，分布在 **3 个知识库**。
-- 按名称去重后 **8 个测评集**，共 **173 条案例记录**。
-- 其中 **5 条已归档**：`CRUD-RAG-reviewed-v1` 的 4 条重复副本，以及被 `CRUD-Acceptance-v1` 取代的旧 CRUD acceptance 批。
-- 新增两套验收集：`Synthetic-Acceptance-v1` 和 `CRUD-Acceptance-v1`，均为 `verified` + `frozen`。
-- `CRUD-RAG-reviewed-v1` 知识库本身也已归档，默认不出现在知识库选择器。
-
-## 主从关系
+## 主从关系（拆分前）
 
 | 用途 | 测评集 | 状态 |
 |---|---|---|
 | 开发检索基线 | `Synthetic-Retrieval-Baseline-20` | 20 题，full，draft |
 | RAGAS 冒烟 | `RAGAS-smoke-e429` | 1 题，full，draft |
 | 合成小样本验收 | `Synthetic-Acceptance-v1` | 15 题，verified + frozen |
-| CRUD 开发批 | `CRUD-RAG-60-v1` 的 3 个 development 批 | 42 题，partial，draft |
-| CRUD 验收集 | `CRUD-Acceptance-v1` | 18 题，full，verified + frozen |
+| CRUD 开发批 | `CRUD-RAG-60-v1` 的 3 个 development 批 | 42 题，partial，draft，**已归档** |
+| CRUD 验收集 | `CRUD-Acceptance-v1`（60-v1 内） | 18 题，full，verified + frozen，**已归档** |
+| CRUD 主题库 | 7 个 `CRUD-*` 库的 `CRUD-Development-v1` | 42 题，partial，draft |
+| CRUD 主题库 | 5 个 `CRUD-*` 库的 `CRUD-Acceptance-v1` | 18 题，full，verified + frozen |
 | CRUD 历史副本 | `CRUD-RAG-reviewed-v1` 四批 | 59 题，**已归档** |
 | 旧 CRUD 验收批 | `CRUD-22-b199fb28-acceptance-1`（60-v1 内） | 18 题，**已归档** |
 
