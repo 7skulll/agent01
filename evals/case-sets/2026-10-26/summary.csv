@@ -1,0 +1,13 @@
+知识库,测评集,版本,题数,语料数,拆分,审核状态,冻结,已归档,已引用评测数,答案题,应拒答题,部分标注,含必要证据,含负相关文件,标签
+合成检索基线-20261023-045051,Synthetic-Retrieval-Baseline-20,1,20,24,development,draft,否,否,3,20,0,0,0,0,"synthetic, retrieval-baseline"
+合成检索基线-20261023-045051,RAGAS-smoke-e429,1,1,24,development,draft,否,否,6,1,0,0,0,0,"ragas, smoke"
+合成检索基线-20261023-045051,Synthetic-Acceptance-v1,1,15,24,acceptance,verified,是,否,2,10,5,0,10,0,"synthetic, acceptance, refusal, evidence-v1"
+CRUD-RAG-60-v1,CRUD-22-b199fb28-development-1,1,20,220,development,draft,否,否,4,20,0,20,0,0,"crud-rag, review-pending"
+CRUD-RAG-60-v1,CRUD-22-b199fb28-development-2,1,20,220,development,draft,否,否,4,20,0,20,0,0,"crud-rag, review-pending"
+CRUD-RAG-60-v1,CRUD-22-b199fb28-development-3,1,2,220,development,draft,否,否,4,2,0,2,0,0,"crud-rag, review-pending"
+CRUD-RAG-60-v1,CRUD-22-b199fb28-acceptance-1,1,18,220,acceptance,draft,否,是,0,18,0,18,0,0,"crud-rag, review-pending"
+CRUD-RAG-60-v1,CRUD-Acceptance-v1,1,18,220,acceptance,verified,是,否,3,18,0,0,18,0,"crud-rag, acceptance, full, evidence-v1"
+CRUD-RAG-reviewed-v1,CRUD-22-b199fb28-development-1,1,20,220,development,draft,否,是,6,20,0,20,0,0,"crud-rag, review-pending"
+CRUD-RAG-reviewed-v1,CRUD-22-b199fb28-development-2,1,20,220,development,draft,否,是,5,20,0,20,0,0,"crud-rag, review-pending"
+CRUD-RAG-reviewed-v1,CRUD-22-b199fb28-development-3,1,1,220,development,draft,否,是,5,1,0,1,0,0,"crud-rag, review-pending"
+CRUD-RAG-reviewed-v1,CRUD-22-b199fb28-acceptance-1,1,18,220,acceptance,draft,否,是,0,18,0,18,0,0,"crud-rag, review-pending"

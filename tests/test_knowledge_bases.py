@@ -65,6 +65,32 @@ def test_migration_preserves_default_and_create_validation(client):
         assert client.post(BASE, json={"name": name}).status_code == 422
 
 
+def test_archived_knowledge_base_is_hidden_and_read_only(client):
+    kb_id = create(client, "归档测试库")
+    upload(client, kb_id)
+    archived = client.patch(f"{BASE}/{kb_id}/archive", json={"archived": True})
+    assert archived.status_code == 200 and archived.json()["archived"] is True
+    assert all(item["kb_id"] != kb_id for item in client.get(BASE).json())
+    included = client.get(BASE + "?include_archived=true").json()
+    assert any(item["kb_id"] == kb_id and item["archived"] for item in included)
+
+    rejected = client.post(
+        f"{BASE}/{kb_id}/files",
+        files={"file": ("制度.txt", "员工年假十天。".encode())},
+        headers={"Idempotency-Key": "archived-upload"},
+    )
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"]["code"] == "knowledge_base_archived"
+    search = client.post(
+        f"{BASE}/{kb_id}/search", json={"query": "年假", "mode": "keyword"}
+    )
+    assert search.status_code == 409
+
+    restored = client.patch(f"{BASE}/{kb_id}/archive", json={"archived": False})
+    assert restored.status_code == 200 and restored.json()["archived"] is False
+    assert any(item["kb_id"] == kb_id for item in client.get(BASE).json())
+
+
 def test_file_search_and_run_scope_are_isolated(client):
     first, second = create(client, "人事制度"), create(client, "项目资料")
     a, b = upload(client, first), upload(client, second)

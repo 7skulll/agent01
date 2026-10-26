@@ -186,6 +186,8 @@ def create_app(
                     await repository.prune_unreferenced_runs(checkpointer)
                     app.state.run_service = RunService(app.state.runtime, run_repository)
                     await app.state.run_service.reconcile_completed()
+                    await app.state.run_service.prune_events()
+                    app.state.run_service.start_maintenance()
                     app.state.knowledge_base_service = KnowledgeBaseService(
                         database,
                         storage,

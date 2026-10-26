@@ -3,7 +3,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from support import ScriptModel, rag_answer, settings
+from support import ScriptModel, events, rag_answer, settings
 from test_knowledge_bases import index, upload
 
 from app.errors import ChatError
@@ -123,6 +123,30 @@ def test_rag_uses_one_actual_retrieval_and_keeps_eval_conversations_out_of_chat(
     assert client.get("/api/v1/conversations").json() == []
 
 
+def test_evaluation_retrieval_event_omits_bodies_and_trace(client):
+    file = upload(client, "default")
+    index(client, "default")
+    report = finish(client, client.post(BASE, json=run_body(file["file_id"], kind="rag")))
+    result = report["results"][0]
+    # 评测结果只保留证据流转需要的候选定位与排名。
+    trace = result["diagnostics"]["trace"]
+    assert trace["before_rerank"]
+    assert all("content" not in source for source in trace["before_rerank"])
+    assert all(
+        {"chunk_id", "file_id", "name", "rank"} <= set(source)
+        for source in trace["before_rerank"]
+    )
+    assert len(trace["before_rerank"]) <= 40
+    assert result["context_sources"][0]["content"]
+
+    stream = events(client.get(f"/api/v1/runs/{result['run_id']}/events"))
+    end = next(data for _, name, data in stream if name == "retrieval_end")
+    assert "trace" not in end["diagnostics"]
+    assert end["sources"]
+    assert all("content" not in source for source in end["sources"])
+    assert all("evidence_chunks" not in source for source in end["sources"])
+
+
 def test_empty_scope_and_unanswerable_are_not_precision_queries(client):
     report = finish(
         client,
@@ -147,6 +171,43 @@ def test_bad_labels_scopes_and_too_many_cases_are_rejected(client):
         {"cases": [{"query": "x"}] * 21},
     ]:
         assert client.post(BASE, json=run_body(file["file_id"], **updates)).status_code == 422
+
+
+def test_archived_case_set_is_hidden_by_default_but_still_readable(client):
+    file = upload(client, "default")
+    index(client, "default")
+    response = client.post(
+        BASE + "/case-sets",
+        json={
+            "knowledge_base_id": "default",
+            "name": "归档测试集",
+            "tags": ["archive-test"],
+            "cases": [
+                {
+                    "query": "年假多少天",
+                    "expected": "answerable",
+                    "relevant_file_ids": [file["file_id"]],
+                }
+            ],
+        },
+    )
+    assert response.status_code == 201, response.text
+    saved = response.json()
+
+    archived = client.patch(
+        BASE + f"/case-sets/{saved['case_set_id']}/archive", json={"archived": True}
+    )
+    assert archived.status_code == 200 and archived.json()["archived"] is True
+    visible = client.get(BASE + "/case-sets").json()
+    assert all(item["case_set_id"] != saved["case_set_id"] for item in visible)
+    included = client.get(BASE + "/case-sets?include_archived=true").json()
+    assert any(item["case_set_id"] == saved["case_set_id"] for item in included)
+    assert client.get(BASE + f"/case-sets/{saved['case_set_id']}").status_code == 200
+
+    restored = client.patch(
+        BASE + f"/case-sets/{saved['case_set_id']}/archive", json={"archived": False}
+    )
+    assert restored.status_code == 200 and restored.json()["archived"] is False
 
 
 def test_failed_labelled_query_counts_zero(client, monkeypatch):
@@ -248,23 +309,45 @@ def test_cancel_during_run_creation_does_not_leave_hidden_active_run(client, mon
     client.portal.call(stop_during_creation)
 
 
-def test_restart_marks_unfinished_evaluations_interrupted_without_model_calls():
-    from psycopg.types.json import Jsonb
+def test_shutdown_marks_running_evaluation_interrupted():
+    config = settings()
 
+    async def slow(*args, **kwargs):
+        await asyncio.Event().wait()
+
+    with TestClient(
+        create_app(config, chat_model=ScriptModel(outputs=[rag_answer("十天")]))
+    ) as client:
+        client.app.state.retrieval_service.search = slow
+        response = client.post(BASE, json=run_body())
+        assert response.status_code == 202
+        evaluation_id = response.json()["evaluation_id"]
+
+    with TestClient(
+        create_app(config, chat_model=ScriptModel(outputs=[rag_answer("十天")]))
+    ) as restarted:
+        result = restarted.get(BASE + "/" + evaluation_id).json()
+        assert result["status"] == "interrupted"
+        assert all(row["status"] != "running" for row in result["results"])
+
+
+def test_restart_marks_unfinished_evaluations_interrupted_without_model_calls():
     config = settings()
     with TestClient(create_app(config)) as client:
         report = finish(client, client.post(BASE, json=run_body(file_ids=[])))
         evaluation_id = report["evaluation_id"]
 
         async def simulate_crash():
-            db = client.app.state.evaluations.database
+            service = client.app.state.evaluations
             results = report["results"]
             results[0]["status"] = "running"
-            async with db.transaction():
-                await db.connection.execute(
-                    "UPDATE evaluations SET status='running',results=%s WHERE evaluation_id=%s",
-                    (Jsonb(results), evaluation_id),
+            async with service.database.transaction():
+                await service.database.connection.execute(
+                    "UPDATE evaluations SET status='running' WHERE evaluation_id=%s",
+                    (evaluation_id,),
                 )
+            # 结果本身逐题落在子表里，模拟崩溃只需把该题写回 running。
+            await service.save_result(evaluation_id, 0, results[0])
 
         client.portal.call(simulate_crash)
     model = ScriptModel(outputs=[rag_answer("不会被调用")])

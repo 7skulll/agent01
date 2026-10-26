@@ -51,8 +51,7 @@ uv run python -m scripts.audit_rerank --enable --order relevant-last --output ev
 
 纯单测覆盖全量 36 题执行、每题一次打分、多策略分数复用、零权重、标签验证、
 无相关候选时零分、无答案分母、候选顺序可复现及初排不使用标签。
-纯单测全套 192 项通过，Ruff 与修改文件格式检查通过。
-真实 BAAI/bge-reranker-v2-m3 全量 36 题已完成，候选限制 40，相关标签候选覆盖率 100%。
+真实重排模型 `BAAI/bge-reranker-v2-m3` 全量 36 题已完成，候选限制 40，相关标签候选覆盖率 100%。
 
 | 策略 | 有答案题 MRR | Recall@1 |
 |---|---:|---:|

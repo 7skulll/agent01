@@ -32,6 +32,48 @@ def digest(value):
     ).hexdigest()
 
 
+# 评测结果只保留证据流转需要的候选标识与排名，不重复保存正文和分数。
+TRACE_SOURCE_FIELDS = frozenset(
+    {
+        "citation_id",
+        "chunk_id",
+        "file_id",
+        "name",
+        "heading",
+        "page",
+        "rank",
+    }
+)
+# 证据归因已在压缩前完成；界面只需要查看有限的候选排名。
+TRACE_CANDIDATE_LIMIT = 40
+
+
+def compact_trace(diagnostics):
+    """压缩 rerank trace：保留候选、排名和定位字段，去掉正文、分数及附件。
+
+    证据归因在压缩前已经算完；这里只处理最终落库的结果。返回是否发生变化。
+    """
+    if not isinstance(diagnostics, dict):
+        return False
+    trace = diagnostics.get("trace")
+    if not isinstance(trace, dict):
+        return False
+    changed = False
+    for stage in ("before_rerank", "after_rerank"):
+        items = trace.get(stage)
+        if not isinstance(items, list):
+            continue
+        compacted = [
+            {key: value for key, value in item.items() if key in TRACE_SOURCE_FIELDS}
+            for item in items
+            if isinstance(item, dict)
+        ][:TRACE_CANDIDATE_LIMIT]
+        if compacted != items:
+            trace[stage] = compacted
+            changed = True
+    return changed
+
+
 class EvaluationService:
     # The run graph owns its own timeout; this grace period only covers DB polling
     # and settlement, so a stalled run cannot block the global evaluation queue.
@@ -49,14 +91,22 @@ class EvaluationService:
                 "SELECT * FROM evaluations WHERE evaluation_id=%s", (evaluation_id,)
             )
             row = await cur.fetchone()
-        if row is None:
-            raise ChatError("evaluation_not_found", "评测记录不存在。", 404)
+            if row is None:
+                raise ChatError("evaluation_not_found", "评测记录不存在。", 404)
+            cur = await self.database.connection.execute(
+                "SELECT payload FROM evaluation_results WHERE evaluation_id=%s "
+                "ORDER BY case_index",
+                (evaluation_id,),
+            )
+            row["results"] = [item["payload"] for item in await cur.fetchall()]
         return row
 
-    async def row(self, evaluation_id, tag=None):
+    async def row(self, evaluation_id, tag=None, *, derived=True):
         row = await self.stored(evaluation_id)
-        selected = [r for r in row["results"] if not tag or tag in r["case"].get("tags", [])]
         row["filter_tag"] = tag
+        if not derived:
+            return row
+        selected = [r for r in row["results"] if not tag or tag in r["case"].get("tags", [])]
         row["quality"] = quality_summary(selected)
         row["generation"] = generation_summary(selected)
         row["summary"] = summarize(selected, row["request"]["k"], kind=row["request"]["kind"])
@@ -90,9 +140,7 @@ class EvaluationService:
     async def update(self, evaluation_id, **fields):
         fields["updated_at"] = utc_now()
         values = [
-            Jsonb(v)
-            if key in ("results", "error", "owned_conversation_ids") and v is not None
-            else v
+            Jsonb(v) if key in ("error", "owned_conversation_ids") and v is not None else v
             for key, v in fields.items()
         ]
         async with self.database.transaction():
@@ -101,6 +149,46 @@ class EvaluationService:
                 + ",".join(key + "=%s" for key in fields)
                 + " WHERE evaluation_id=%s",
                 (*values, evaluation_id),
+            )
+
+    async def save_results(self, evaluation_id, items):
+        """逐题提交结果；一次事务里只重写发生变化的题。"""
+        items = list(items)
+        if not items:
+            return
+        timestamp = utc_now()
+        async with self.database.transaction():
+            await self.database.connection.executemany(
+                "INSERT INTO evaluation_results(evaluation_id,case_index,payload,updated_at) "
+                "VALUES(%s,%s,%s,%s) ON CONFLICT(evaluation_id,case_index) DO UPDATE SET "
+                "payload=EXCLUDED.payload,updated_at=EXCLUDED.updated_at",
+                [
+                    (evaluation_id, index, Jsonb(result), timestamp)
+                    for index, result in items
+                ],
+            )
+            await self.database.connection.execute(
+                "UPDATE evaluations SET updated_at=%s WHERE evaluation_id=%s",
+                (timestamp, evaluation_id),
+            )
+
+    async def save_result(self, evaluation_id, index, result):
+        await self.save_results(evaluation_id, [(index, result)])
+
+    async def patch_result(self, evaluation_id, index, fields):
+        """只改一道题的顶层字段（人工审核等），不重写其余题。"""
+        timestamp = utc_now()
+        async with self.database.transaction():
+            cursor = await self.database.connection.execute(
+                "UPDATE evaluation_results SET payload=payload || %s::jsonb,updated_at=%s "
+                "WHERE evaluation_id=%s AND case_index=%s",
+                (Jsonb(fields), timestamp, evaluation_id, index),
+            )
+            if cursor.rowcount == 0:
+                raise ChatError("case_not_found", "案例不存在。", 404)
+            await self.database.connection.execute(
+                "UPDATE evaluations SET updated_at=%s WHERE evaluation_id=%s",
+                (timestamp, evaluation_id),
             )
 
     async def corpus(self, body):
@@ -285,8 +373,7 @@ class EvaluationService:
                 await require_knowledge_base(self.database, body.knowledge_base_id, lock=True)
                 await self.database.connection.execute(
                     "INSERT INTO evaluations(evaluation_id,idempotency_key,created_at,updated_at,"
-                    "status,request,snapshot,results) "
-                    "VALUES(%s,%s,%s,%s,'running',%s,%s,%s)",
+                    "status,request,snapshot) VALUES(%s,%s,%s,%s,'running',%s,%s)",
                     (
                         evaluation_id,
                         str(body.idempotency_key),
@@ -294,9 +381,17 @@ class EvaluationService:
                         timestamp,
                         Jsonb(request),
                         Jsonb(snapshot),
-                        Jsonb(initial_results),
                     ),
                 )
+                if initial_results:
+                    await self.database.connection.executemany(
+                        "INSERT INTO evaluation_results("
+                        "evaluation_id,case_index,payload,updated_at) VALUES(%s,%s,%s,%s)",
+                        [
+                            (evaluation_id, index, Jsonb(result), timestamp)
+                            for index, result in enumerate(initial_results)
+                        ],
+                    )
             task = asyncio.create_task(self.execute(evaluation_id, body, snapshot, seeds))
             self.tasks[evaluation_id] = task
             task.add_done_callback(lambda done: self.done(evaluation_id, done))
@@ -351,7 +446,9 @@ class EvaluationService:
             message = "RAGAS 评分失败，请检查依赖、模型配置或服务状态。"
             for index in indices:
                 results[index]["judge_error"] = message
-            await self.update(evaluation_id, results=results)
+            await self.save_results(
+                evaluation_id, [(index, results[index]) for index in indices]
+            )
             logger.warning("evaluation_judge_failed_type=%s", type(exc).__name__)
             return
         metadata = getattr(self.app.state.evaluation_judge, "metadata", {}) or {}
@@ -363,7 +460,9 @@ class EvaluationService:
                 "worker": metadata.get("worker"),
                 **score,
             }
-        await self.update(evaluation_id, results=results)
+        await self.save_results(
+            evaluation_id, [(index, results[index]) for index in indices]
+        )
 
     @complete_on_cancel
     async def start_run(self, evaluation_id, body, case):
@@ -416,7 +515,7 @@ class EvaluationService:
                         "evaluation_inputs_changed", "资料或模型配置已变化，请创建新评测。", 409
                     )
                 if seeds and index in seeds:
-                    await self.update(evaluation_id, results=results)
+                    # 种子已在创建评测时写入子表，复用成功题不重复计费也不重写。
                     continue
                 result = {
                     "case": case.model_dump(),
@@ -426,9 +525,11 @@ class EvaluationService:
                 }
                 if preallocated:
                     results[index] = result
+                    position = index
                 else:
                     results.append(result)
-                await self.update(evaluation_id, results=results)
+                    position = len(results) - 1
+                await self.save_result(evaluation_id, position, result)
                 started = time.perf_counter()
                 try:
                     if body.kind == "retrieval":
@@ -455,7 +556,7 @@ class EvaluationService:
                     else:
                         active_run = await self.start_run(evaluation_id, body, case)
                         result["run_id"] = active_run
-                        await self.update(evaluation_id, results=results)
+                        await self.save_result(evaluation_id, position, result)
                         deadline = (
                             started
                             + self.app.state.runtime.settings.agent_timeout_seconds
@@ -497,7 +598,9 @@ class EvaluationService:
                             run=final,
                             sources=state.get("retrieved_sources", []),
                             context_sources=state.get("rag_sources", []),
-                            diagnostics=state.get("retrieval_info", {}).get("diagnostics", {}),
+                            diagnostics=deepcopy(
+                                state.get("retrieval_info", {}).get("diagnostics", {})
+                            ),
                             assembly=state.get("assembly_diagnostics", {}),
                             query_plan={
                                 "queries": state.get("search_queries", [case.query]),
@@ -567,8 +670,9 @@ class EvaluationService:
                 if active_run:
                     await self.cancel_active(evaluation_id, active_run)
                     active_run = None
+                compact_trace(result.get("diagnostics"))
                 result["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 2)
-                await self.update(evaluation_id, results=results)
+                await self.save_result(evaluation_id, position, result)
             stopped = (await self.control(evaluation_id))["stop_requested"]
             if not stopped and body.options.judge != "none":
                 await self.judge_results(evaluation_id, results)
@@ -577,21 +681,31 @@ class EvaluationService:
             )
         except asyncio.CancelledError:
             await self.cancel_active(evaluation_id, active_run)
-            for result in results:
+            changed = []
+            for index, result in enumerate(results):
                 if result["status"] == "running":
                     result["status"] = "cancelled"
-            await self.update(evaluation_id, status="stopped", results=results, active_run_id=None)
+                    changed.append((index, result))
+            await self.save_results(evaluation_id, changed)
+            await self.update(
+                evaluation_id,
+                status="interrupted" if self.closing else "stopped",
+                active_run_id=None,
+            )
         except Exception as exc:
             await self.cancel_active(evaluation_id, active_run)
             error = {
                 "code": getattr(exc, "code", "evaluation_failed"),
                 "message": str(exc) if isinstance(exc, ChatError) else "评测执行中断。",
             }
-            for result in results:
+            changed = []
+            for index, result in enumerate(results):
                 if result["status"] == "running":
                     result.update(status="failed", error=error, metrics=None)
+                    changed.append((index, result))
+            await self.save_results(evaluation_id, changed)
             await self.update(
-                evaluation_id, status="failed", results=results, active_run_id=None, error=error
+                evaluation_id, status="failed", active_run_id=None, error=error
             )
 
     async def stop(self, evaluation_id):
@@ -606,26 +720,34 @@ class EvaluationService:
                 latest = await self.stored(evaluation_id)
                 if latest["status"] == "running":
                     await self.cancel_active(evaluation_id)
-                    for result in latest["results"]:
+                    changed = []
+                    for index, result in enumerate(latest["results"]):
                         if result["status"] == "running":
                             result["status"] = "cancelled"
-                    await self.update(evaluation_id, status="stopped", results=latest["results"])
+                            changed.append((index, result))
+                    await self.save_results(evaluation_id, changed)
+                    await self.update(evaluation_id, status="stopped")
             return await self.row(evaluation_id)
 
-    async def case_sets(self, kb_id=None):
-        condition = "WHERE c.kb_id=%s" if kb_id else ""
-        args = (kb_id,) if kb_id else ()
+    async def case_sets(self, kb_id=None, include_archived=False):
+        conditions, args = [], []
+        if kb_id:
+            conditions.append("c.kb_id=%s")
+            args.append(kb_id)
+        if not include_archived:
+            conditions.append("c.archived=FALSE")
+        condition = "WHERE " + " AND ".join(conditions) if conditions else ""
         async with self.database.read():
             cur = await self.database.connection.execute(
                 "SELECT c.case_set_id,c.kb_id,k.name AS kb_name,c.name,c.version,c.tags,"
-                "c.created_at,c.fingerprint,c.split,c.review_status,c.frozen,"
+                "c.created_at,c.fingerprint,c.split,c.review_status,c.frozen,c.archived,"
                 "jsonb_array_length(c.cases) AS case_count,"
                 "jsonb_array_length(c.corpus) AS corpus_count "
                 "FROM evaluation_case_sets c "
                 "JOIN knowledge_bases k ON k.kb_id=c.kb_id "
                 + condition
                 + " ORDER BY c.created_at DESC LIMIT 100",
-                args,
+                tuple(args),
             )
             return await cur.fetchall()
 
@@ -647,6 +769,20 @@ class EvaluationService:
         if not saved:
             raise ChatError("case_set_not_found", "案例集版本不存在。", 404)
         return saved
+
+    async def archive_case_set(self, case_set_id, archived):
+        """归档不改内容；case_set() 仍可按 ID 读取，供历史评测与重试使用。"""
+        async with self.lock:
+            async with self.database.transaction():
+                cur = await self.database.connection.execute(
+                    "UPDATE evaluation_case_sets SET archived=%s "
+                    "WHERE case_set_id=%s RETURNING *",
+                    (archived, case_set_id),
+                )
+                row = await cur.fetchone()
+            if not row:
+                raise ChatError("case_set_not_found", "案例集版本不存在。", 404)
+            return row
 
     async def save_case_set(self, body):
         async with self.lock:
@@ -699,6 +835,7 @@ class EvaluationService:
                 previous = await cur.fetchone()
                 if (
                     previous
+                    and not previous["archived"]
                     and previous["fingerprint"] == fingerprint
                     and previous["tags"] == body.tags
                 ):
@@ -706,8 +843,8 @@ class EvaluationService:
                 case_set_id = str(uuid4())
                 cur = await self.database.connection.execute(
                     "INSERT INTO evaluation_case_sets(case_set_id,kb_id,name,version,tags,cases,"
-                    "corpus,fingerprint,created_at,split,review_status,frozen) "
-                    "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+                    "corpus,fingerprint,created_at,split,review_status,frozen,archived) "
+                    "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,FALSE) RETURNING *",
                     (
                         case_set_id,
                         body.knowledge_base_id,
@@ -793,26 +930,32 @@ class EvaluationService:
     async def setup(self):
         async with self.database.read():
             cur = await self.database.connection.execute(
-                "SELECT * FROM evaluations WHERE status='running'"
+                "SELECT evaluation_id FROM evaluations WHERE status='running'"
             )
-            interrupted = await cur.fetchall()
-        for row in interrupted:
+            interrupted = [row["evaluation_id"] for row in await cur.fetchall()]
+        for evaluation_id in interrupted:
+            row = await self.stored(evaluation_id)
             if row["active_run_id"]:
                 try:
                     await self.app.state.run_service.cancel(row["active_run_id"])
                 except ChatError:
                     pass
-            for result in row["results"]:
+            changed = []
+            for index, result in enumerate(row["results"]):
                 if result["status"] == "running":
                     result["status"] = "cancelled"
+                    changed.append((index, result))
+            await self.save_results(evaluation_id, changed)
             await self.update(
-                row["evaluation_id"],
+                evaluation_id,
                 status="interrupted",
                 active_run_id=None,
-                results=row["results"],
             )
 
     async def close(self):
         self.closing = True
-        for evaluation_id in list(self.tasks):
-            await self.stop(evaluation_id)
+        tasks = [task for task in self.tasks.values() if not task.done()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)

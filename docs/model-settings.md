@@ -1,6 +1,7 @@
 # 模型设置
 
-更新：2026-10-19。侧栏“模型设置”可配置工作空间共用的对话模型与 Embedding。
+更新：2026-10-26。侧栏「模型设置」可配置工作空间共用的对话模型与 Embedding。
+整页仅管理员可见；同一页面下方还有「用户管理」面板，管理账号与角色（接口前缀 `/api/v1/users`）。
 
 ## 使用
 
@@ -10,7 +11,8 @@
    知识库问答默认使用 JSON mode，兼容服务不支持时仍需通过环境配置关闭 JSON mode。
 3. Embedding 使用 OpenAI 兼容 Embeddings API，填写其独立的服务地址、模型 ID 和 API Key。
    单条输入 Token 上限必须明确填写；向量维度 0 表示首次调用推断，填写正数表示校验期望维度，
-   不等同于请求服务商缩短向量。HNSW 要求明确设置 1–2000 维。
+   不等同于请求服务商缩短向量。向量检索固定使用 pgvector 精确余弦，
+   不构建 HNSW 等近似索引，因此**没有维度上限**（迁移 `013_drop_hnsw_indexes.sql` 已移除近似索引）。
 4. 分别点击保存。保存后立即生效，重启后保留。保存不发送外部请求，也不自动重建索引；
    页面“已配置”仅表示已装配客户端，不表示鉴权、连通性或接口能力已验证。
 
@@ -42,7 +44,26 @@ GET/保存/恢复接口只返回 key_configured 状态，不回传密钥，也�
 | GET | 空 | 当前公开配置及密钥是否已设置 |
 | PUT | /llm | 保存 provider、model、base_url、可选 api_key、max_tokens、input_tokens |
 | PUT | /embedding | 保存 model、base_url、可选 api_key、dimension、max_input_tokens |
-| DELETE | /llm 或 /embedding | 恢复对应环境配置 |
+| DELETE | /{kind} | `kind` 为 `llm` 或 `embedding`，恢复对应环境配置 |
 
-新增迁移 008_model_settings.sql 启动时自动执行。仅添加配置存储，无需重新上传既有文件。
-环境变量 RAG_LLM_PROVIDER 可选 deepseek（兼容旧行为）或 openai；后者使用 Chat Completions。
+以上四个接口都要求管理员（`require_admin`）。
+
+迁移 `008_model_settings.sql` 启动时自动执行，仅添加配置存储，无需重新上传既有文件。
+环境变量 `RAG_LLM_PROVIDER` 可选 `deepseek`（兼容旧行为）或 `openai`；后者使用 Chat Completions。
+
+### 用户管理
+
+同一页面下方的用户管理面板使用另一个前缀 `/api/v1/users`：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | 空 | 列出账号 |
+| POST | 空 | 创建账号，指定用户名、显示名、角色、密码 |
+| PATCH | /{user_id} | 改角色、停用、重置密码 |
+| DELETE | /{user_id} | 删除账号 |
+
+三个角色（`app/users.py` 的 `ROLES`）：`admin`（管理员，全部权限）、`staff`（员工，上传/删除文件、构建索引、管理知识库、发起与审核评测）、
+`viewer`（普通用户，只读，可问答、检索、下载）。账号与会话表由迁移 `014_users.sql` 创建；
+自助注册固定创建 `viewer`，可用 `RAG_REGISTRATION_ENABLED=false` 关闭。
+
+服务端命令行管理见 [项目 README](../README.md) 的 `scripts.user_admin` 部分。

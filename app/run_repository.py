@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from psycopg.types.json import Jsonb
@@ -35,6 +36,23 @@ class RunRepository:
                 f"UPDATE runs SET status='recovering', {_ELAPSED_ROLLOVER} "
                 "WHERE status IN ('queued','running')"
             )
+
+    async def prune_events(self, days):
+        """清理已结束任务的历史事件，保留最后一条供 SSE 断线重连终止。"""
+        if days <= 0:
+            return 0
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        async with self.transaction():
+            cursor = await self.connection.execute(
+                "WITH old AS ("
+                "SELECT run_id,event_seq FROM runs WHERE status IN "
+                "('completed','failed','cancelled') "
+                "AND updated_at::timestamptz < %s::timestamptz"
+                ") DELETE FROM run_events e USING old "
+                "WHERE e.run_id=old.run_id AND e.seq < old.event_seq",
+                (cutoff,),
+            )
+            return cursor.rowcount
 
     async def _row(self, run_id):
         cursor = await self.connection.execute(

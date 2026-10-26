@@ -46,6 +46,12 @@ class KnowledgeBase(BaseModel):
     name: str
     created_at: str
     file_count: int = 0
+    archived: bool = False
+
+
+class KnowledgeBaseArchive(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    archived: bool
 
 
 class DeleteResult(BaseModel):
@@ -63,6 +69,10 @@ async def require_knowledge_base(database, kb_id, *, lock=False):
         row = await cursor.fetchone()
         if row is None:
             raise ChatError("knowledge_base_not_found", "知识库不存在或已被删除，请重新选择。", 404)
+        if row["archived"]:
+            raise ChatError(
+                "knowledge_base_archived", "知识库已归档，仅保留历史记录，不能再写入或运行。", 409
+            )
         return row
 
 
@@ -75,12 +85,14 @@ class KnowledgeBaseService:
         self.file_service = file_service
         self.cleanup_lock = asyncio.Lock()
 
-    async def list(self):
+    async def list(self, include_archived=False):
+        condition = "" if include_archived else "WHERE k.archived=FALSE"
         async with self.database.read():
             cursor = await self.database.connection.execute(
                 "SELECT k.*, COUNT(f.file_id) AS file_count FROM knowledge_bases k "
-                "LEFT JOIN files f ON f.kb_id=k.kb_id GROUP BY k.kb_id "
-                "ORDER BY k.created_at,k.kb_id"
+                "LEFT JOIN files f ON f.kb_id=k.kb_id "
+                + condition
+                + " GROUP BY k.kb_id ORDER BY k.created_at,k.kb_id"
             )
             return [KnowledgeBase(**row) for row in await cursor.fetchall()]
 
@@ -97,6 +109,42 @@ class KnowledgeBaseService:
                 "knowledge_base_name_exists", "已有同名知识库，请使用其他名称。", 409
             ) from None
         return KnowledgeBase(kb_id=kb_id, name=body.name, created_at=timestamp)
+
+    async def archive(self, kb_id, archived):
+        async with self.database.transaction():
+            cursor = await self.database.connection.execute(
+                "SELECT * FROM knowledge_bases WHERE kb_id=%s FOR UPDATE", (kb_id,)
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                raise ChatError(
+                    "knowledge_base_not_found", "知识库不存在或已被删除，请重新选择。", 404
+                )
+            if archived:
+                await self._ensure_no_running_evaluations(kb_id)
+                cursor = await self.database.connection.execute(
+                    "SELECT 1 FROM runs WHERE knowledge_base_id=%s "
+                    "AND status IN ('queued','running','paused','recovering') LIMIT 1",
+                    (kb_id,),
+                )
+                if await cursor.fetchone():
+                    raise ChatError(
+                        "knowledge_base_busy",
+                        "知识库有未结束的问答任务，请先完成或取消。",
+                        409,
+                        True,
+                    )
+            cursor = await self.database.connection.execute(
+                "UPDATE knowledge_bases SET archived=%s WHERE kb_id=%s RETURNING *",
+                (archived, kb_id),
+            )
+            row = await cursor.fetchone()
+        async with self.database.read():
+            cursor = await self.database.connection.execute(
+                "SELECT COUNT(*) AS n FROM files WHERE kb_id=%s", (kb_id,)
+            )
+            count = (await cursor.fetchone())["n"]
+        return KnowledgeBase(**row, file_count=count)
 
     async def cleanup(self):
         async with self.cleanup_lock:
@@ -253,8 +301,8 @@ class KnowledgeBaseService:
 
 
 @router.get("", response_model=list[KnowledgeBase])
-async def list_knowledge_bases(request: Request):
-    return await request.app.state.knowledge_base_service.list()
+async def list_knowledge_bases(request: Request, include_archived: bool = False):
+    return await request.app.state.knowledge_base_service.list(include_archived)
 
 
 @router.post(
@@ -262,6 +310,13 @@ async def list_knowledge_bases(request: Request):
 )
 async def create_knowledge_base(body: KnowledgeBaseCreate, request: Request):
     return await request.app.state.knowledge_base_service.create(body)
+
+
+@router.patch(
+    "/{kb_id}/archive", response_model=KnowledgeBase, dependencies=[Depends(require_staff)]
+)
+async def archive_knowledge_base(kb_id: str, body: KnowledgeBaseArchive, request: Request):
+    return await request.app.state.knowledge_base_service.archive(kb_id, body.archived)
 
 
 @router.delete("/{kb_id}", response_model=DeleteResult, dependencies=[Depends(require_staff)])

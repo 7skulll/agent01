@@ -39,6 +39,32 @@ class RunService:
         self.control_lock = asyncio.Lock()
         self.graph = None
         self.closing = False
+        self.maintenance: asyncio.Task | None = None
+
+    async def prune_events(self):
+        """按保留期清理历史事件；每个任务至少保留最后一条供 SSE 重连终止。"""
+        try:
+            removed = await self.repository.prune_events(
+                self.runtime.settings.event_retention_days
+            )
+        except psycopg.Error:
+            logger.warning("run_events_prune_failed")
+            return 0
+        if removed:
+            logger.info("run_events_pruned removed=%s", removed)
+        return removed
+
+    def start_maintenance(self):
+        if self.maintenance is None or self.maintenance.done():
+            self.maintenance = asyncio.create_task(
+                self._maintenance(), name="event-retention"
+            )
+
+    async def _maintenance(self):
+        # 启动时已经清过一次；之后每小时检查，避免长驻进程只增不减。
+        while True:
+            await asyncio.sleep(3600)
+            await self.prune_events()
 
     def get_graph(self):
         if self.graph is None:
@@ -356,6 +382,9 @@ class RunService:
     async def close(self):
         async with self.control_lock:
             self.closing = True
+            if self.maintenance and not self.maintenance.done():
+                self.maintenance.cancel()
+                await asyncio.gather(self.maintenance, return_exceptions=True)
             tasks = list(self.tasks.values())
             for task in tasks:
                 task.cancel()

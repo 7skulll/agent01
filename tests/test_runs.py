@@ -244,6 +244,30 @@ def test_event_replay_validates_cursor_and_does_not_repeat_events():
         ]
 
 
+def test_event_retention_keeps_last_event_for_reconnect():
+    with TestClient(
+        create_app(settings(), chat_model=ScriptModel(outputs=[AIMessage(content="好")]))
+    ) as client:
+        _, run = create_run(client)
+        wait_run(client, run)
+        all_events = events(client.get(f"/api/v1/runs/{run}/events"))
+        assert len(all_events) > 1
+
+        async def expire_and_prune():
+            repo = client.app.state.run_service.repository
+            async with repo.transaction():
+                await repo.connection.execute(
+                    "UPDATE runs SET updated_at=%s WHERE run_id=%s",
+                    ("2000-01-01T00:00:00+00:00", run),
+                )
+            return await repo.prune_events(1)
+
+        assert client.portal.call(expire_and_prune) == len(all_events) - 1
+        remaining = events(client.get(f"/api/v1/runs/{run}/events"))
+        assert len(remaining) == 1
+        assert remaining[0][1] == "done"
+
+
 def test_sse_disconnect_leaves_task_running_and_can_reconnect():
     model = StreamingModel()
     app = create_app(settings(), chat_model=model)

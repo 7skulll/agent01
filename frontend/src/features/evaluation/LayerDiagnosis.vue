@@ -72,35 +72,18 @@ const issues = computed(() => {
   }
   return rows
 })
-const metrics = computed(() =>
-  [
-    { label: '召回率', value: props.retrieval.recall, source: '检索层' },
-    { label: '精准率', value: props.retrieval.precision, source: '检索层' },
-    { label: 'MRR', value: props.retrieval.mrr, source: '检索层' },
-    { label: '忠实度', value: faithfulness.value, source },
-    { label: '答案相关性', value: relevancy.value, source },
-    { label: '正确性', value: correctness.value, source },
-    { label: '完整性', value: completeness.value, source },
-  ].filter((metric) => metric.source === '检索层' || props.showGeneration),
-)
 </script>
 
 <template>
   <section class="card eval-layer-diagnosis">
     <div class="eval-generation-heading">
       <div>
-        <h2>分层诊断</h2>
+        <h2>诊断提示</h2>
         <p class="small muted">
-          先判断检索层是否把必要资料召回，再判断生成层是否忠实、相关、正确和完整。阈值提示只用于定位，不是统计显著性结论。
+          指标已在上方质量面板汇总；这里只给出阈值触发的定位提示，不作为统计显著性结论。
         </p>
       </div>
       <span v-if="showGeneration" class="badge muted">生成层来源：{{ source }}</span>
-    </div>
-    <div class="eval-diagnosis-metrics">
-      <span v-for="metric in metrics" :key="metric.label + metric.source">
-        <small>{{ metric.source }} · {{ metric.label }}</small>
-        <strong>{{ percent(metric.value) }}</strong>
-      </span>
     </div>
     <ul class="eval-diagnosis-issues">
       <li v-for="(issue, index) in issues" :key="index" :class="issue.level">

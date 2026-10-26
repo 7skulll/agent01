@@ -11,11 +11,14 @@ const props = defineProps<{
   active: boolean
   previewLoading?: boolean
   canWrite: boolean
+  showArchived: boolean
 }>()
 const emit = defineEmits<{
   (event: 'preview', set: CaseSet): void
   (event: 'load', set: CaseSet): void
   (event: 'test', set: CaseSet): void
+  (event: 'archive', set: CaseSet): void
+  (event: 'toggle-archived'): void
   (event: 'import', file: File): void
   (event: 'refresh'): void
   (event: 'export', set: CaseSet): void
@@ -25,10 +28,15 @@ const importing = ref<HTMLInputElement>()
 const scope = ref<'current' | 'all'>('current')
 const caseCount = (set: CaseSet) => set.case_count ?? set.cases?.length ?? 0
 const corpusCount = (set: CaseSet) => set.corpus_count ?? 0
-const visibleSets = computed(() =>
-  scope.value === 'current'
-    ? props.sets.filter((set) => !set.kb_id || set.kb_id === props.currentKbId)
-    : props.sets,
+const visibleSets = computed(() => {
+  const scoped =
+    scope.value === 'current'
+      ? props.sets.filter((set) => !set.kb_id || set.kb_id === props.currentKbId)
+      : props.sets
+  return scoped.filter((set) => props.showArchived || !set.archived)
+})
+const archivedCount = computed(
+  () => props.sets.filter((set) => set.archived && set.kb_id === props.currentKbId).length,
 )
 const totalCases = computed(() => visibleSets.value.reduce((sum, set) => sum + caseCount(set), 0))
 const verifiedCount = computed(
@@ -60,7 +68,7 @@ function pickFile(event: Event) {
       <div>
         <h2>测评集</h2>
         <p class="small muted">
-          显式查看当前知识库或全部知识库的测评集，包括历史创建的 CRUD-RAG 测评集。导入 JSON
+          显式查看当前知识库或全部知识库的测评集，默认隐藏已归档的重复版本。导入 JSON
           会校验标注文件是否属于目标知识库，并保存为可复用版本。
         </p>
       </div>
@@ -73,6 +81,13 @@ function pickFile(event: Event) {
             全部知识库
           </button>
         </div>
+        <label class="eval-archived-toggle">
+          <input
+            type="checkbox"
+            :checked="showArchived"
+            @change="emit('toggle-archived')"
+          />显示已归档<span v-if="archivedCount">（{{ archivedCount }}）</span>
+        </label>
         <button class="button" type="button" :disabled="busy || active" @click="emit('refresh')">
           刷新
         </button>
@@ -146,6 +161,7 @@ function pickFile(event: Event) {
               <strong>{{ set.name }}</strong>
               <small class="eval-dataset-version">v{{ set.version }}</small>
               <small class="eval-dataset-id">{{ set.case_set_id.slice(0, 8) }}</small>
+              <span v-if="set.archived" class="badge muted">已归档</span>
             </td>
             <td v-if="scope === 'all'">
               <span class="eval-dataset-kb">{{ set.kb_name || set.kb_id || '未知知识库' }}</span>
@@ -186,10 +202,19 @@ function pickFile(event: Event) {
                   v-if="canWrite"
                   class="text-button strong"
                   type="button"
-                  :disabled="busy || active"
+                  :disabled="busy || active || !!set.archived"
                   @click="emit('test', set)"
                 >
                   载入并测试
+                </button>
+                <button
+                  v-if="canWrite"
+                  class="text-button"
+                  type="button"
+                  :disabled="busy || active"
+                  @click="emit('archive', set)"
+                >
+                  {{ set.archived ? '取消归档' : '归档' }}
                 </button>
               </div>
             </td>
@@ -221,7 +246,7 @@ function pickFile(event: Event) {
             v-if="canWrite"
             class="button primary"
             type="button"
-            :disabled="busy || active"
+            :disabled="busy || active || !!preview.archived"
             @click="emit('test', preview)"
           >
             载入并测试

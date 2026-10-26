@@ -41,7 +41,8 @@ defineEmits<{ close: [] }>()
         }}<span v-if="source.page"> · 第 {{ source.page }} 页</span>
       </div>
       <span v-if="source.truncated" class="badge">按问题与上下文预算抽取原文</span>
-      <pre class="source-content">{{ source.content }}</pre>
+      <pre v-if="source.content" class="source-content">{{ source.content }}</pre>
+      <p v-else class="muted small">该候选未进入最终来源，原文未随评测结果保存。</p>
       <p v-if="source.evidence_chunks?.length" class="muted small">
         本段包含 {{ source.evidence_chunks.length }} 个原文片段，按原文顺序呈现。
         <template v-if="source.evidence_chunks.some((chunk) => chunk.role === 'neighbor')"

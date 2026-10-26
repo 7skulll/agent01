@@ -1,8 +1,9 @@
 # 同页 RAG 评测第三版
 
-更新：2026-10-19。当前实现为第三版，替代评测第一版和已合并的第二版规划。
+更新：2026-10-26。当前实现为第三版，是评测口径的唯一现行说明。
 入口：检索调试页「RAG 评测」标签，或 `/api/v1/evaluations`。
-历史实测 JSON 保留在 `evals/results/`，旧版说明不再代表当前口径。
+评测第一版（`evaluation-v1.md`）和第二版规划（`evaluation-v2-plan.md`）的内容已合并到本页并删除原文；
+历史实测 JSON 保留在 `evals/results/`。
 
 ## 目标与边界
 
@@ -136,6 +137,20 @@ uv run python -m scripts.prepare_evaluation_v3 --import-url http://127.0.0.1:800
 # 真实链路小样本冒烟，验证评测、重试、对比和报告
 uv run python -m scripts.smoke_evaluation_v3_live
 ```
+
+## 方法参考
+
+指标与数据组织参考以下公开工作，均为**方法借鉴**，不复现官方数据集或评分流程，也不与公开排行榜比较：
+
+| 来源 | 借鉴内容 |
+|---|---|
+| [BEIR](https://github.com/beir-cellar/beir/blob/main/beir/retrieval/evaluation.py) | corpus / query / qrels 分离与 IR 排名评估；这里采用二值文件级 qrels 与本地小样本 |
+| [MTEB](https://github.com/embeddings-benchmark/mteb) | 任务、配置、数据集版本与结果可追溯的组织方式；只覆盖文本检索与 RAG |
+| [RAGBench](https://arxiv.org/abs/2407.11005) | 检索相关性与回答质量**分层评估**，不把文件命中率称作 faithfulness |
+| [KILT](https://github.com/facebookresearch/KILT#kilt-data-format) | 答案与 provenance 一起保存；这里落为 `evidence_groups` 原文锚点 |
+
+第三版已取代评测第一版和评测第二版规划，两者文档已删除；本页是评测口径的唯一现行说明。
+历史实测 JSON 仍保留在 `evals/results/`，可作为当时版本的证据，但其中数值不代表当前口径。
 
 ## 已知边界
 

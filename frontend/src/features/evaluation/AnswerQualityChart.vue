@@ -72,6 +72,7 @@ const ragasMetrics = computed<DisplayMetric[]>(() =>
   }),
 )
 const metrics = computed(() => (source.value === 'ragas' ? ragasMetrics.value : humanMetrics.value))
+const hasScored = computed(() => metrics.value.some((metric) => metric.value != null))
 const colors: Record<string, string> = {
   faithfulness: '#24745d',
   answer_relevancy: '#246a9e',
@@ -120,8 +121,11 @@ const detail = (metric: DisplayMetric) => {
     <p v-if="!metrics.length" class="notice">
       人工审核尚无已评的生成层指标。请先审核回答，或切换到可用的 RAGAS 自动评分。
     </p>
+    <p v-else-if="!hasScored" class="eval-unscored-note">
+      当前还没有已评分的生成层指标；完成人工审核或启用 RAGAS 后，这里会显示对比图和分数。
+    </p>
     <svg
-      v-if="metrics.length"
+      v-if="metrics.length && hasScored"
       :viewBox="`0 0 ${chart.width} ${chart.height}`"
       role="img"
       aria-label="生成层指标：忠实度、答案相关性、正确性和完整性柱状图"
@@ -195,7 +199,11 @@ const detail = (metric: DisplayMetric) => {
       </g>
     </svg>
     <div v-if="metrics.length" class="eval-answer-metric-list">
-      <div v-for="metric in metrics" :key="metric.key">
+      <div
+        v-for="metric in metrics"
+        :key="metric.key"
+        :class="{ 'is-unscored': metric.value == null }"
+      >
         <span class="eval-answer-metric-name"
           ><i :style="{ background: colors[metric.key] }" />{{ metric.label }}</span
         >

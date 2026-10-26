@@ -101,12 +101,15 @@ uv run python -m scripts.user_admin passwd --username boss
 ```text
 app/          后端接口、任务管理与 RAG 流程
 frontend/     Vue 工作台
-scripts/      验证与评测脚本
+scripts/      验证、评测与数据准备脚本
 tests/        后端测试
-evals/        评测案例与历史结果
-docs/         设计说明（部分文档描述旧版行为）
+evals/        评测案例集与历史实验结果
+tools/        RAGAS worker（独立运行环境）
+docs/         设计说明
+data/         本地上传文件与语料（已 gitignore）
 ```
 
+文档入口是 [docs/README.md](docs/README.md)：列出全部现行文档、当前版本标识和未实施事项。
 检索排序、评分类型与阈值语义见 [RETRIEVAL.md](RETRIEVAL.md)。
 
 ## 开发检查

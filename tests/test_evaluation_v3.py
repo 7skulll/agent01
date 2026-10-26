@@ -171,7 +171,7 @@ def test_unknown_rag_calls_need_explicit_confirmation_and_running_tasks_cannot_b
     async def make_unknown():
         results = parent["results"]
         results[0].update(status="failed", run={"model_calls": 1})
-        await client.app.state.evaluations.update(eid, results=results)
+        await client.app.state.evaluations.save_result(eid, 0, results[0])
 
     client.portal.call(make_unknown)
     plan = client.get(BASE + "/" + eid + "/retry-plan").json()

@@ -128,4 +128,6 @@ class Settings(BaseSettings):
     agent_max_tool_calls: int = Field(default=8, ge=1, le=30)
     agent_timeout_seconds: float = Field(default=120, gt=0, le=600)
     stream_heartbeat_seconds: float = Field(default=15, gt=0, le=60)
+    # 已结束任务的事件保留天数；0 关闭清理。每个任务至少保留最后一条事件供断线重连。
+    event_retention_days: int = Field(default=14, ge=0, le=3650)
     cors_allow_origins: str = "*"

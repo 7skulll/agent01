@@ -1,6 +1,7 @@
 """解析精细化与结构切片的专项测试（不依赖网络与外部模型）。"""
 
 from io import BytesIO
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -362,20 +363,8 @@ def test_postgres_schema_supports_parser_metadata_and_large_files():
         ).fetchall()
         assert {"source_order", "heading_level", "kind"} <= {row[0] for row in columns}
         assert {row[0] for row in connection.execute("SELECT version FROM schema_migrations")} == {
-            "001_initial.sql",
-            "002_prune_redundant_indexes.sql",
-            "003_independent_lexical.sql",
-            "004_run_retrieval_mode.sql",
-            "005_knowledge_bases.sql",
-            "006_structured_answers.sql",
-            "007_daily_management.sql",
-            "008_model_settings.sql",
-            "009_evaluations.sql",
-            "010_evaluation_case_sets.sql",
-            "011_evaluation_v3.sql",
-            "012_retrieval_search.sql",
-            "013_drop_hnsw_indexes.sql",
-            "014_users.sql",
+            path.name
+            for path in (Path(__file__).parents[1] / "app" / "migrations").glob("*.sql")
         }
     with TestClient(create_app(settings())):
         pass

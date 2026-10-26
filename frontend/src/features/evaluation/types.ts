@@ -78,6 +78,7 @@ export interface CaseSet {
   split?: 'development' | 'acceptance'
   review_status?: 'draft' | 'verified'
   frozen?: boolean
+  archived?: boolean
   case_set_id: string
   kb_id?: string
   kb_name?: string
@@ -164,6 +165,8 @@ export interface EvalResult {
     stage_ms?: Record<string, number>
     degraded?: string[]
     rerank_applied?: boolean
+    deduplicated_count?: number
+    fused_count?: number
   }
   assembly?: Record<string, number | string | object>
   run?: Run

@@ -17,21 +17,26 @@ const labels: Record<string, string> = {
     <p class="small muted">
       仅统计完成的完整 RAG；未审核、不适用和服务失败不会当作通过。原文覆盖与语义质量分别观察。
     </p>
-    <div class="eval-outcomes">
-      <span>通过 {{ quality.verdicts.pass || 0 }}</span
-      ><span>部分 {{ quality.verdicts.partial || 0 }}</span
-      ><span>错误 {{ quality.verdicts.fail || 0 }}</span
-      ><span>待审核 {{ quality.verdicts.pending || 0 }}</span
-      ><strong>已审核通过率 {{ percent(quality.pass_rate) }}</strong>
-    </div>
-    <div v-for="(value, key) in quality.dimensions" :key="key" class="eval-quality-row">
-      <div>
+    <div
+      v-for="(value, key) in quality.dimensions"
+      :key="key"
+      class="eval-quality-row"
+      :class="{ 'is-unscored': !value.judged }"
+    >
+      <div class="eval-quality-label">
         <span>{{ labels[key] || key }}</span
         ><small>已评 {{ value.judged }} · 待评 {{ value.pending }} · 不适用 {{ value.na }}</small>
       </div>
-      <progress max="1" :value="value.rate ?? 0" :aria-label="labels[key] || key" /><strong>{{
-        percent(value.rate)
-      }}</strong>
+      <div class="eval-quality-track">
+        <progress
+          v-if="value.judged"
+          max="1"
+          :value="value.rate ?? 0"
+          :aria-label="labels[key] || key"
+        />
+        <span v-else class="eval-quality-pending">尚未审核</span>
+      </div>
+      <strong>{{ percent(value.rate) }}</strong>
     </div>
     <h3>本次执行用量</h3>
     <p>

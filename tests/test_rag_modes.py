@@ -38,6 +38,7 @@ def test_knowledge_answer_without_embedding(mode):
         frames = events(client.get(f"/api/v1/runs/{run_id}/events"))
         end = next(data for _, event, data in frames if event == "retrieval_end")
         assert end["diagnostics"]["keyword_count"] > 0
+        assert end["sources"] and all(source["content"] for source in end["sources"])
         assert end["diagnostics"]["degraded"] == (["vector_failed"] if mode == "hybrid" else [])
         repeat = client.post(f"/api/v1/conversations/{cid}/runs", json=body)
         assert repeat.status_code == 202 and repeat.json()["run_id"] == run_id

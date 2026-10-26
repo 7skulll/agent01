@@ -55,8 +55,19 @@ async def save_case_set(body: CaseSetRequest, request: Request):
 
 
 @router.get("/case-sets")
-async def list_case_sets(request: Request, knowledge_base_id: str | None = None):
-    return await request.app.state.evaluations.case_sets(knowledge_base_id)
+async def list_case_sets(
+    request: Request,
+    knowledge_base_id: str | None = None,
+    include_archived: bool = False,
+):
+    return await request.app.state.evaluations.case_sets(
+        knowledge_base_id, include_archived=include_archived
+    )
+
+
+@router.patch("/case-sets/{case_set_id}/archive", dependencies=[Depends(require_staff)])
+async def archive_case_set(case_set_id: UUID, body: ArchiveRequest, request: Request):
+    return await request.app.state.evaluations.archive_case_set(str(case_set_id), body.archived)
 
 
 @router.get("/case-sets/{case_set_id}")
@@ -79,7 +90,10 @@ async def regression_gate(
     max_answer_drop: float = Query(default=0.05, ge=0, le=1),
 ):
     service = request.app.state.evaluations
-    comparison = compare(await service.row(str(baseline)), await service.row(str(candidate)))
+    comparison = compare(
+        await service.row(str(baseline), derived=False),
+        await service.row(str(candidate), derived=False),
+    )
     checks = []
 
     def add(name, delta, threshold, source):
@@ -132,7 +146,10 @@ async def regression_gate(
 @router.get("/compare")
 async def compare_evaluations(request: Request, left: UUID, right: UUID):
     service = request.app.state.evaluations
-    return compare(await service.row(str(left)), await service.row(str(right)))
+    return compare(
+        await service.row(str(left), derived=False),
+        await service.row(str(right), derived=False),
+    )
 
 
 @router.get("/{evaluation_id}")
@@ -158,8 +175,7 @@ async def review_evaluation(evaluation_id: UUID, index: int, body: Review, reque
             raise ChatError("evaluation_busy", "请在评测结束后保存人工评价。", 409)
         if not 0 <= index < len(row["results"]):
             raise ChatError("case_not_found", "案例不存在。", 404)
-        row["results"][index]["review"] = body.model_dump()
-        await service.update(str(evaluation_id), results=row["results"])
+        await service.patch_result(str(evaluation_id), index, {"review": body.model_dump()})
     return await service.row(str(evaluation_id))
 
 
@@ -179,7 +195,7 @@ async def export_evaluation(evaluation_id: UUID, request: Request):
 @router.get("/{evaluation_id}/retry-plan")
 async def retry_plan(evaluation_id: UUID, request: Request):
     service = request.app.state.evaluations
-    return service.retry_plan(await service.row(str(evaluation_id)))
+    return service.retry_plan(await service.row(str(evaluation_id), derived=False))
 
 
 @router.post("/{evaluation_id}/retry", status_code=202, dependencies=[Depends(require_staff)])

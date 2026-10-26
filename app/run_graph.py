@@ -82,6 +82,26 @@ def emit(event, data):
     get_stream_writer()({"event": event, "data": data})
 
 
+# 评测已把完整来源和 trace 存进逐题结果；SSE 事件不再重复正文。
+_COMPACT_SOURCE_KEYS = frozenset(
+    {"content", "supporting_chunks", "alternatives", "evidence_chunks"}
+)
+
+
+def retrieval_end_payload(state, info, sources, diagnostics):
+    merged = {**info["diagnostics"], "context_assembly": diagnostics}
+    if not state.get("capture_trace"):
+        return {**info, "sources": sources, "diagnostics": merged}
+    return {
+        **info,
+        "diagnostics": {key: value for key, value in merged.items() if key != "trace"},
+        "sources": [
+            {key: value for key, value in source.items() if key not in _COMPACT_SOURCE_KEYS}
+            for source in sources
+        ],
+    }
+
+
 def build_run_graph(runtime, repository):
     settings = runtime.settings
     tools = {tool.name: tool for tool in CHAT_TOOLS}
@@ -186,11 +206,7 @@ def build_run_graph(runtime, repository):
         info = state["retrieval_info"]
         emit(
             "retrieval_end",
-            {
-                **info,
-                "sources": result["sources"],
-                "diagnostics": {**info["diagnostics"], "context_assembly": diagnostics},
-            },
+            retrieval_end_payload(state, info, result["sources"], diagnostics),
         )
         emit("context_assembly", diagnostics)
         update = {

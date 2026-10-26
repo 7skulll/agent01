@@ -1,0 +1,310 @@
+{
+  "database": {
+    "name": "langchain_rag",
+    "version": "PostgreSQL 16.15 (Homebrew) on aarch64-apple-darwin25.6.0, compiled by Apple clang version 21.0.0 (clang-2100.1.1.101), 64-bit"
+  },
+  "test_database_exists": true,
+  "settings": [
+    {
+      "name": "autovacuum",
+      "setting": "on"
+    },
+    {
+      "name": "autovacuum_vacuum_scale_factor",
+      "setting": "0.2"
+    },
+    {
+      "name": "autovacuum_vacuum_threshold",
+      "setting": "50"
+    },
+    {
+      "name": "wal_compression",
+      "setting": "off"
+    }
+  ],
+  "extension": [
+    {
+      "extname": "vector",
+      "extversion": "0.8.2"
+    }
+  ],
+  "evaluations_storage": {
+    "heap_bytes": 57344,
+    "table_bytes": 771866624,
+    "total_bytes": 771915776,
+    "toast_total_bytes": 771784704,
+    "reloptions": null
+  },
+  "evaluations_stats": {
+    "n_live_tup": 39,
+    "n_dead_tup": 48,
+    "n_tup_upd": 1295,
+    "last_vacuum": null,
+    "last_autovacuum": null,
+    "vacuum_count": 0,
+    "autovacuum_count": 0,
+    "stats_reset": null
+  },
+  "toast_stats": {
+    "n_live_tup": 20089,
+    "n_dead_tup": 3020,
+    "last_vacuum": null,
+    "last_autovacuum": "2026-10-26 08:35:43.199315+08:00",
+    "vacuum_count": 0,
+    "autovacuum_count": 13
+  },
+  "live_values": {
+    "rows": 39,
+    "results_stored_bytes": 83576010,
+    "results_json_text_bytes": 162855185,
+    "snapshot_stored_bytes": 938357
+  },
+  "temporary_schemas": [],
+  "table_counts": {
+    "files": 465,
+    "knowledge_bases": 4
+  },
+  "storage_benchmark": {
+    "sample_json_bytes": 418829,
+    "questions": 10,
+    "method": "EXPLAIN (ANALYZE, WAL, FORMAT JSON); WAL attributed to each statement",
+    "whole_array": {
+      "wal_bytes": 23349326,
+      "write_statements": 20,
+      "elapsed_ms": 1004.11,
+      "allocated_before_vacuum_bytes": 22282240,
+      "allocated_after_vacuum_bytes": 22323200
+    },
+    "concat_and_jsonb_set": {
+      "wal_bytes": 23349326,
+      "write_statements": 20,
+      "elapsed_ms": 711.81,
+      "allocated_before_vacuum_bytes": 22282240,
+      "allocated_after_vacuum_bytes": 22323200
+    },
+    "per_case": {
+      "wal_bytes": 2288728,
+      "write_statements": 20,
+      "elapsed_ms": 131.17,
+      "allocated_before_vacuum_bytes": 2301952,
+      "allocated_after_vacuum_bytes": 2342912
+    },
+    "sample_kind": "one existing real result reused locally; report contains sizes only"
+  },
+  "pipeline": {
+    "keyword_rerank": {
+      "delay_injected_ms": 50,
+      "calls": 3,
+      "measurements": [
+        {
+          "mode": "inherit",
+          "samples": [
+            {
+              "elapsed_ms": 53.39,
+              "rerank_applied": true,
+              "stage_ms": {
+                "keyword": 2.05,
+                "fusion": 0.07,
+                "rerank": 50.77,
+                "total": 53.03
+              }
+            },
+            {
+              "elapsed_ms": 56.94,
+              "rerank_applied": true,
+              "stage_ms": {
+                "keyword": 4.98,
+                "fusion": 0.04,
+                "rerank": 51.14,
+                "total": 56.3
+              }
+            },
+            {
+              "elapsed_ms": 56.39,
+              "rerank_applied": true,
+              "stage_ms": {
+                "keyword": 4.45,
+                "fusion": 0.03,
+                "rerank": 51.11,
+                "total": 55.71
+              }
+            }
+          ]
+        },
+        {
+          "mode": "off",
+          "samples": [
+            {
+              "elapsed_ms": 7.82,
+              "rerank_applied": false,
+              "stage_ms": {
+                "keyword": 5.95,
+                "fusion": 0.04,
+                "total": 6.2
+              }
+            },
+            {
+              "elapsed_ms": 3.44,
+              "rerank_applied": false,
+              "stage_ms": {
+                "keyword": 2.81,
+                "fusion": 0.02,
+                "total": 2.93
+              }
+            },
+            {
+              "elapsed_ms": 3.01,
+              "rerank_applied": false,
+              "stage_ms": {
+                "keyword": 2.55,
+                "fusion": 0.03,
+                "total": 2.68
+              }
+            }
+          ]
+        }
+      ],
+      "external_model_calls": 0
+    },
+    "ten_case_execution": {
+      "status": "completed",
+      "cases": 10,
+      "snapshots": 21,
+      "snapshot_total_ms": 73.97,
+      "snapshot_mean_ms": 3.52,
+      "results_updates": 20,
+      "total_json_serialized_bytes": 337778,
+      "last_json_bytes": 33240
+    },
+    "ten_case_rag_execution": {
+      "status": "completed",
+      "cases": 10,
+      "case_statuses": [
+        "completed",
+        "completed",
+        "completed",
+        "completed",
+        "completed",
+        "completed",
+        "completed",
+        "completed",
+        "completed",
+        "completed"
+      ],
+      "snapshots": 21,
+      "results_updates": 30,
+      "external_model_calls": 0,
+      "chat_history_count": 0
+    },
+    "concurrent_submission": {
+      "first_status": 202,
+      "second_status": 409,
+      "second_code": "evaluation_busy"
+    },
+    "worker_ownership": {
+      "second_worker_accepted": false,
+      "reason": "该数据库已有运行中的应用实例；当前仅支持单 worker。"
+    },
+    "kb_columns": [
+      {
+        "column_name": "kb_id"
+      },
+      {
+        "column_name": "name"
+      },
+      {
+        "column_name": "created_at"
+      }
+    ]
+  },
+  "audit_schema_cleaned": true,
+  "schema_lifecycle": {
+    "normal_cleaned": true,
+    "exception_cleaned": true,
+    "sigkill_leaks_schema": true,
+    "sigkill_residue_cleaned": true
+  },
+  "metrics_memory": {
+    "after_10000": {
+      "counter_keys": 1,
+      "timing_keys": 1,
+      "bucket_entries": 10,
+      "allocated_bytes_since_start": 832
+    },
+    "after_110000": {
+      "counter_keys": 1,
+      "timing_keys": 1,
+      "bucket_entries": 10,
+      "allocated_bytes_since_start": 864
+    },
+    "scope": "fixed internal labels; no per-request trace retained by Metrics"
+  },
+  "readonly_performance": {
+    "corpus_query": {
+      "files": 220,
+      "mean_ms": 1.48,
+      "min_ms": 1.24,
+      "max_ms": 1.72
+    },
+    "database_size_bytes": 864263191,
+    "code_hash": {
+      "files": 51,
+      "mean_ms": 1.6,
+      "min_ms": 1.47,
+      "max_ms": 2.31
+    },
+    "health": {
+      "requests": 10,
+      "statuses": [
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200
+      ],
+      "mean_ms": 2.32
+    }
+  },
+  "post_test_main_database": {
+    "evaluations": 39,
+    "files": 465,
+    "knowledge_bases": 4,
+    "eval_schemas": 0
+  },
+  "post_test_test_database": {
+    "audit_schemas": 0
+  },
+  "test_scope": {
+    "main_database": "read only",
+    "writes": "isolated schema in existing langchain_rag_test database",
+    "external_models": "none; synthetic chat and 50ms rerank stub",
+    "wal_sample": "existing real result, 418829 UTF-8 JSON bytes; reused ten times; SQL-level comparison",
+    "health_check": "10 requests, not a five-minute load test",
+    "main_vacuum_or_config_changes": false,
+    "note": "test WAL and PostgreSQL internal free pages can persist after DROP SCHEMA"
+  },
+  "process_rss_sample": {
+    "backend_listener_pids": [
+      34655,
+      34657
+    ],
+    "backend_rss_kib": [
+      46336,
+      50976
+    ],
+    "vite_listener_pid": 23928,
+    "vite_rss_kib": 62896,
+    "interpretation": "point-in-time RSS; not peak memory or total process-tree PSS"
+  },
+  "disk_sample_kib": {
+    ".venv": 163836,
+    "frontend/node_modules": 198772,
+    "tools/ragas-worker/.venv": 324704,
+    "data": 108364
+  }
+}

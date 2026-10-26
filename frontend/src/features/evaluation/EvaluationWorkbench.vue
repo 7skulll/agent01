@@ -111,13 +111,48 @@ const corpus = useQuery({
 const caseSets = useQuery({
   queryKey: ['case-sets'],
   queryFn: async () => {
-    const rows = await request<CaseSet[]>('/evaluations/case-sets')
+    const rows = await request<CaseSet[]>('/evaluations/case-sets?include_archived=true')
     return Array.isArray(rows) ? rows : []
   },
 })
 const previewSet = ref<CaseSet | null>(null)
 const previewLoading = ref(false)
+const showArchivedSets = ref(false)
 const pendingCaseSet = ref<{ id: string; test: boolean } | null>(null)
+const quickSetId = ref('')
+const quickSets = computed(() =>
+  (caseSets.data.value || []).filter((set) => set.kb_id === props.kbId && !set.archived),
+)
+async function archiveCaseSet(set: CaseSet) {
+  if (!canIngest.value || busy.value || active.value) return
+  busy.value = true
+  error.value = null
+  try {
+    await request(`/evaluations/case-sets/${set.case_set_id}/archive`, {
+      method: 'PATCH',
+      body: JSON.stringify({ archived: !set.archived }),
+    })
+    if (previewSet.value?.case_set_id === set.case_set_id) previewSet.value = null
+    await client.invalidateQueries({ queryKey: ['case-sets'] })
+  } catch (e) {
+    error.value = e
+  } finally {
+    busy.value = false
+  }
+}
+watch(
+  quickSets,
+  (sets) => {
+    if (!sets.some((set) => set.case_set_id === quickSetId.value)) {
+      quickSetId.value = sets[0]?.case_set_id || ''
+    }
+  },
+  { immediate: true },
+)
+async function quickRun() {
+  const saved = quickSets.value.find((set) => set.case_set_id === quickSetId.value)
+  if (saved) await testCaseSet(saved)
+}
 const setId = ref(''),
   setName = ref(''),
   setTags = ref(''),
@@ -840,6 +875,18 @@ async function saveBadCases() {
   }
 }
 const trace = computed(() => selected.value?.diagnostics?.trace)
+function sourceBody(chunkId: string) {
+  const r = selected.value
+  if (!r || !chunkId) return ''
+  const pools = [...(r.sources || []), ...(r.context_sources || []), ...(r.run?.sources || [])]
+  for (const item of pools) {
+    if (item.chunk_id === chunkId && item.content) return item.content
+    for (const chunk of item.evidence_chunks || []) {
+      if (chunk.chunk_id === chunkId && chunk.content) return chunk.content
+    }
+  }
+  return ''
+}
 const evidenceRows = computed(() => {
   const r = selected.value
   if (!r) return []
@@ -858,7 +905,7 @@ const evidenceRows = computed(() => {
     ]),
   )
   return before.map((s, i) => ({
-    source: s,
+    source: { ...s, content: s.content || sourceBody(s.chunk_id) },
     before: i + 1,
     after: after.findIndex((a) => a.chunk_id === s.chunk_id) + 1,
     context: context.has(s.chunk_id),
@@ -888,17 +935,59 @@ const maxTime = computed(() => Math.max(1, ...timing.value.map(([, v]) => v)))
     :active="active"
     :preview-loading="previewLoading"
     :can-write="canIngest"
+    :show-archived="showArchivedSets"
     @preview="previewCaseSet"
     @load="loadCaseSet"
     @test="testCaseSet"
+    @archive="archiveCaseSet"
+    @toggle-archived="showArchivedSets = !showArchivedSets"
     @import="importCaseSet"
     @refresh="refreshCaseSets"
     @export="exportCaseSet"
     @close-preview="previewSet = null"
   />
+  <section class="card eval-quick">
+    <div class="eval-quick-copy">
+      <h2>快速评测</h2>
+      <p class="small muted">
+        选择一个已保存的测评集直接运行；改题、标注和高级参数在下方“自定义配置”里。
+      </p>
+    </div>
+    <template v-if="quickSets.length">
+      <label class="field"
+        >测评集<select v-model="quickSetId" :disabled="busy || active" aria-label="快速评测测评集">
+          <option v-for="set in quickSets" :key="set.case_set_id" :value="set.case_set_id">
+            {{ set.name }} · v{{ set.version }}
+          </option>
+        </select></label
+      >
+      <label class="field"
+        >运行方式<select v-model="kind" :disabled="busy || active" aria-label="快速评测运行方式">
+          <option value="retrieval">仅检索</option>
+          <option value="rag">完整 RAG</option>
+        </select></label
+      >
+      <label class="field"
+        >检索方式<select v-model="mode" :disabled="busy || active" aria-label="快速评测检索方式">
+          <option v-for="(name, value) in modeLabels" :key="value" :value="value">
+            {{ name }}
+          </option>
+        </select></label
+      >
+      <button
+        class="button primary"
+        type="button"
+        :disabled="!canIngest || busy || active || !quickSetId"
+        @click="quickRun"
+      >
+        {{ active ? '评测执行中' : busy ? '提交中…' : '一键评测' }}
+      </button>
+    </template>
+    <p v-else class="small muted">当前知识库还没有测评集；在下方填写案例并保存后，这里会出现一键入口。</p>
+  </section>
   <div class="eval-layout">
     <form class="card eval-config" @submit.prevent="start">
-      <h2>实验配置</h2>
+      <h2>自定义配置</h2>
       <p class="small muted">最多 20 题、逐题运行。完整 RAG 会调用回答模型。</p>
       <p
         v-if="kind === 'rag' && capabilities.data.value?.max_model_calls_per_case"
@@ -1081,65 +1170,68 @@ const maxTime = computed(() => Math.max(1, ...timing.value.map(([, v]) => v)))
                 />{{ f.name }}</label
               >
             </div>
-            <label class="field"
-              >业务标签<input
-                :value="(c.tags || []).join(', ')"
-                :aria-label="`案例 ${i + 1} 业务标签`"
-                placeholder="同场景同标签；逗号分隔"
-                maxlength="800"
-                @change="
-                  c.tags = ($event.target as HTMLInputElement).value
-                    .split(/[,，]/)
-                    .map((t) => t.trim())
-                    .filter(Boolean)
+            <details class="eval-advanced-label">
+              <summary>高级标注（可选）</summary>
+              <label class="field"
+                >业务标签<input
+                  :value="(c.tags || []).join(', ')"
+                  :aria-label="`案例 ${i + 1} 业务标签`"
+                  placeholder="同场景同标签；逗号分隔"
+                  maxlength="800"
+                  @change="
+                    c.tags = ($event.target as HTMLInputElement).value
+                      .split(/[,，]/)
+                      .map((t) => t.trim())
+                      .filter(Boolean)
+                  "
+              /></label>
+              <label class="field"
+                >标注范围<select v-model="c.judgment_scope" :aria-label="`案例 ${i + 1} 标注范围`">
+                  <option value="full">完整（已穷尽相关文件）</option>
+                  <option value="partial">部分（其他文件仍待审核）</option>
+                </select></label
+              >
+              <details v-if="c.judgment_scope === 'partial'">
+                <summary>明确不相关的文件</summary>
+                <div class="file-options">
+                  <label v-for="f in files.data.value" :key="f.file_id"
+                    ><input
+                      v-model="c.negative_file_ids"
+                      type="checkbox"
+                      :value="f.file_id"
+                      :disabled="c.relevant_file_ids.includes(f.file_id)"
+                    />{{ f.name }}</label
+                  >
+                </div>
+              </details>
+              <EvidenceEditor
+                v-if="c.expected === 'answerable' && c.evidence_groups"
+                v-model="c.evidence_groups"
+                :files="
+                  (corpus.data.value || []).filter((f) => c.relevant_file_ids.includes(f.file_id))
                 "
-            /></label>
-            <label class="field"
-              >标注范围<select v-model="c.judgment_scope" :aria-label="`案例 ${i + 1} 标注范围`">
-                <option value="full">完整（已穷尽相关文件）</option>
-                <option value="partial">部分（其他文件仍待审核）</option>
-              </select></label
-            >
-            <details v-if="c.judgment_scope === 'partial'">
-              <summary>明确不相关的文件</summary>
-              <div class="file-options">
-                <label v-for="f in files.data.value" :key="f.file_id"
-                  ><input
-                    v-model="c.negative_file_ids"
-                    type="checkbox"
-                    :value="f.file_id"
-                    :disabled="c.relevant_file_ids.includes(f.file_id)"
-                  />{{ f.name }}</label
-                >
-              </div>
-            </details>
-            <EvidenceEditor
-              v-if="c.expected === 'answerable' && c.evidence_groups"
-              v-model="c.evidence_groups"
-              :files="
-                (corpus.data.value || []).filter((f) => c.relevant_file_ids.includes(f.file_id))
-              "
-            />
-            <details>
-              <summary>答案人工审核要点与参考答案</summary>
-              <label class="field"
-                >审核要点<textarea
-                  v-model="c.required_facts"
-                  maxlength="2000"
-                  rows="2"
-                  placeholder="必须回答的事实、限制条件或应拒答原因"
-                  :aria-label="`案例 ${i + 1} 审核要点`"
-                />
-              </label>
-              <label class="field"
-                >参考答案<textarea
-                  v-model="c.reference_answer"
-                  maxlength="4000"
-                  rows="2"
-                  placeholder="RAGAS 正确性和完整性评分使用；可留空"
-                  :aria-label="`案例 ${i + 1} 参考答案`"
-                />
-              </label>
+              />
+              <details>
+                <summary>答案人工审核要点与参考答案</summary>
+                <label class="field"
+                  >审核要点<textarea
+                    v-model="c.required_facts"
+                    maxlength="2000"
+                    rows="2"
+                    placeholder="必须回答的事实、限制条件或应拒答原因"
+                    :aria-label="`案例 ${i + 1} 审核要点`"
+                  />
+                </label>
+                <label class="field"
+                  >参考答案<textarea
+                    v-model="c.reference_answer"
+                    maxlength="4000"
+                    rows="2"
+                    placeholder="RAGAS 正确性和完整性评分使用；可留空"
+                    :aria-label="`案例 ${i + 1} 参考答案`"
+                  />
+                </label>
+              </details>
             </details>
             <button
               v-if="cases.length > 1"
@@ -1373,13 +1465,16 @@ const maxTime = computed(() => Math.max(1, ...timing.value.map(([, v]) => v)))
           :quality="current.quality"
           :generation="current.generation"
         />
-        <LayerDiagnosis
-          :retrieval="current.summary.metrics"
-          :human="current.quality"
-          :generation="current.generation"
-          :show-generation="current.request.kind === 'rag' || current.generation?.available"
-        />
-        <QualityOverview v-if="current.quality" :quality="current.quality" />
+        <details v-if="current.quality" class="card eval-quality-details">
+          <summary>人工审核明细与诊断</summary>
+          <QualityOverview :quality="current.quality" />
+          <LayerDiagnosis
+            :retrieval="current.summary.metrics"
+            :human="current.quality"
+            :generation="current.generation"
+            :show-generation="current.request.kind === 'rag' || current.generation?.available"
+          />
+        </details>
         <p
           v-if="
             !current.snapshot.case_set || current.snapshot.case_set.review_status !== 'verified'
@@ -1414,7 +1509,10 @@ const maxTime = computed(() => Math.max(1, ...timing.value.map(([, v]) => v)))
             >整体拒答成功 {{ current.summary.refusal_correct }}/{{
               current.summary.refusal_attempted ?? current.summary.refusal_total
             }}（含服务失败）</span
-          ><span>人工已评 {{ current.summary.reviewed }}</span>
+          ><span>人工已评 {{ current.summary.reviewed }}</span
+          ><span v-if="current.quality"
+            >人工通过率 {{ formatPercent(current.quality.pass_rate) }}</span
+          >
         </div>
         <section class="card eval-chart-card">
           <MetricChart :curves="current.summary.curves" />
@@ -1470,7 +1568,14 @@ const maxTime = computed(() => Math.max(1, ...timing.value.map(([, v]) => v)))
           </p>
           <div class="eval-pipeline">
             <span>查询</span><b>→</b
-            ><span>候选 {{ selected.diagnostics?.trace?.before_rerank.length ?? '—' }}</span
+            ><span
+              >候选
+              {{
+                selected.diagnostics?.deduplicated_count ??
+                selected.diagnostics?.trace?.before_rerank.length ??
+                '—'
+              }}</span
+            >
             ><b>→</b><span>{{ selected.diagnostics?.rerank_applied ? '已重排' : '未重排' }}</span
             ><b>→</b><span>模型证据 {{ selected.context_sources?.length ?? '—' }}</span
             ><b>→</b><span>引用 {{ selected.run?.sources.length ?? '—' }}</span>
