@@ -210,7 +210,11 @@ def markdown_report(row):
     ]
     lines += [
         "",
-        f"完整标注计分题：{row['summary']['metric_queries']}（失败计零）；小样本不推断生产准确率或显著性。",
+        "完整标注计分题："
+        f"{row['summary']['metric_queries']}（失败 "
+        f"{row['summary'].get('labelled_failures', 0)} 题，"
+        f"其中 {row['summary'].get('retrieval_scored_failures', 0)} 题按已保留的检索结果计分；"
+        "无可用检索结果的失败题计零）；小样本不推断生产准确率或显著性。",
         "",
         "## 人工回答质量",
         "",

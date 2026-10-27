@@ -56,7 +56,8 @@ def judgment_coverage(sources, case, k):
 
 
 def summarize(results, k, *, kind=None):
-    # Failed labelled cases count as zero; stopped/unattempted cases are excluded.
+    # Use the observed retrieval score even if a later stage failed.
+    # Failures without a usable retrieval result count as zero.
     labelled = [
         r
         for r in results
@@ -86,6 +87,9 @@ def summarize(results, k, *, kind=None):
         "metrics": metrics,
         "metric_queries": len(eligible),
         "labelled_failures": sum(r["status"] == "failed" for r in eligible),
+        "retrieval_scored_failures": sum(
+            r["status"] == "failed" and r.get("metrics") is not None for r in eligible
+        ),
         "completed": len(completed),
         "failed": sum(r["status"] == "failed" for r in results),
         "cancelled": sum(r["status"] == "cancelled" for r in results),

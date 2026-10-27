@@ -3,7 +3,7 @@
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.schemas import EvaluationOptions
 
@@ -55,6 +55,24 @@ class EvalCase(BaseModel):
         ):
             raise ValueError("证据文件必须属于正相关文件。")
         return self
+
+
+def cases_equal(left, right):
+    """Compare versioned cases using current defaults without rewriting saved data.
+
+    Legacy JSON may omit fields introduced later, such as reference_answer. The
+    API validates incoming cases and adds these defaults, so raw JSON equality
+    would reject an unchanged case set. Invalid legacy data must still fail.
+    Case order and all substantive labels, references and evidence stay significant.
+    """
+    if not isinstance(left, list) or not isinstance(right, list):
+        return False
+    try:
+        return [EvalCase.model_validate(c).model_dump(mode="json") for c in left] == [
+            EvalCase.model_validate(c).model_dump(mode="json") for c in right
+        ]
+    except ValidationError:
+        return False
 
 
 class EvalRequest(BaseModel):

@@ -25,3 +25,22 @@ Jieba 无命中且存在有效查询词时，使用独立的字符词项 GIN 索
 正文按连续空白归一化判定重复，但返回原文并保留其他来源。代码、表格和列表保留内部空白语义。近重复使用字符片段重合度软降权，不删除可能带有不同数值或约束的证据，也不会让未重排尾部越过已重排候选。
 
 上下文装配在每次请求内缓存 Token 计数和片段快照，完整 JSON 和消息预算仍精确复检，不依赖片段 Token 的简单相加。超预算表格可选择完整相关行，保留可识别表头与说明，并记录原文范围和截取标志；最小安全单元仍放不下时明确记录跳过原因。代码、列表继续保留整块，避免裁剪破坏语义。
+
+
+## 重排独立审计
+
+`scripts/audit_rerank.py` 用固定合成候选检查重排能力，不执行实际召回或回答生成。
+默认读取 `evals/retrieval_baseline.json` 与 `evals/bm25_holdout.json`，分别构造候选，
+以固定种子的随机初排对比配置权重、0.75 RRF 和纯模型排序。同一题复用一批真实模型分数，
+不为比较策略重复调用模型。运行会访问配置的重排服务。
+
+```bash
+uv run python -m scripts.audit_rerank --enable
+uv run python -m scripts.audit_rerank --enable --dataset evals/bm25_holdout.json --output evals/results/rerank-holdout.json
+```
+
+`--dataset` 可重复指定。`--order relevant-last` 是使用标签把相关文件置底的显式压力场景，
+应与默认随机初排分开解释。审计关闭相关性阈值，不修改生产配置；报告保存候选覆盖率、
+语料哈希、模型分数和逐题排名。默认历史报告见
+[rerank-audit-v2.json](evals/results/rerank-audit-v2.json)。
+历史合成集的高分不能代表端到端 RAG 准确率；被反复观察的 holdout 不再属于盲测集。

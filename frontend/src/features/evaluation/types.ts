@@ -248,6 +248,7 @@ export interface EvalRecord {
     curves: (Scores & { k: number })[]
     metric_queries: number
     labelled_failures: number
+    retrieval_scored_failures: number
     completed: number
     failed: number
     cancelled: number

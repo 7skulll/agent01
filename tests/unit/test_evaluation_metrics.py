@@ -1,3 +1,4 @@
+import asyncio
 import math
 
 import pytest
@@ -5,6 +6,7 @@ from pydantic import ValidationError
 
 from app.evaluation_metrics import retrieval_metrics, summarize
 from app.evaluation_models import EvalCase, EvalRequest
+from app.evaluations import EvaluationService
 
 
 def test_ir_metrics_use_unique_files_and_fixed_k_denominator():
@@ -45,6 +47,53 @@ def test_macro_scores_include_failures_and_exclude_cancelled_unlabelled_and_nega
     assert result["labelled_failures"] == 1
     assert result["cancelled"] == 1
     assert summarize([], 5)["metrics"]["precision"] is None
+
+
+def test_generation_failure_with_retrieved_sources_keeps_real_ir_score():
+    rows = [
+        {
+            "case": {"expected": "answerable", "relevant_file_ids": ["a"]},
+            "status": "failed",
+            "metrics": retrieval_metrics([{"file_id": "a"}], ["a"], 5),
+        },
+        {
+            "case": {"expected": "answerable", "relevant_file_ids": ["b"]},
+            "status": "failed",
+            "metrics": None,
+        },
+    ]
+    result = summarize(rows, 5)
+    assert result["metrics"]["recall"] == 0.5
+    assert result["metrics"]["precision"] == 0.1
+    assert result["labelled_failures"] == 2
+    assert result["retrieval_scored_failures"] == 1
+
+
+def test_reading_old_runs_recomputes_retrieval_after_generation_failure():
+    result = {
+        "case": {"expected": "answerable", "relevant_file_ids": ["a"]},
+        "status": "failed",
+        "metrics": None,
+        "sources": [{"file_id": "a"}],
+        "error": {"code": "invalid_answer_schema"},
+    }
+    invalidated = {
+        **result,
+        "error": {"code": "evaluation_inputs_changed"},
+        "sources": [{"file_id": "a"}],
+    }
+    service = EvaluationService(None, None)
+
+    async def stored(_):
+        return {"request": {"kind": "rag", "k": 5}, "results": [result, invalidated]}
+
+    service.stored = stored
+    row = asyncio.run(service.row("old-run"))
+    assert row["results"][0]["metrics"]["recall"] == 1
+    assert row["results"][1]["metrics"] is None
+    assert row["summary"]["metrics"]["recall"] == 0.5
+    assert row["summary"]["retrieval_scored_failures"] == 1
+    assert row["summary"]["curves"][0]["recall"] == 0.5
 
 
 def test_labels_do_not_treat_empty_gold_as_perfect_refusal():

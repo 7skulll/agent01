@@ -223,6 +223,45 @@ def test_failed_labelled_query_counts_zero(client, monkeypatch):
     assert report["summary"]["labelled_failures"] == 1
 
 
+def test_legacy_case_set_runs_without_history_but_real_edits_are_rejected(client):
+    saved = client.post(
+        BASE + "/case-sets",
+        json={
+            "knowledge_base_id": "default",
+            "name": "旧版本案例集",
+            "cases": [{"query": "资料中有哪些内容？"}],
+        },
+    ).json()
+
+    async def legacy_json():
+        database = client.app.state.evaluations.database
+        async with database.transaction():
+            await database.connection.execute(
+                "UPDATE evaluation_case_sets SET cases=cases #- '{0,reference_answer}' "
+                "WHERE case_set_id=%s",
+                (saved["case_set_id"],),
+            )
+
+    client.portal.call(legacy_json)
+    legacy = client.get(BASE + "/case-sets/" + saved["case_set_id"]).json()
+    assert "reference_answer" not in legacy["cases"][0]
+    assert client.get(BASE).json() == []
+    body = run_body(file_ids=[], case_set_id=saved["case_set_id"], cases=saved["cases"])
+    changed = {**body, "cases": [{**body["cases"][0], "reference_answer": "新答案"}]}
+    rejected = client.post(BASE, json=changed)
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"]["code"] == "case_set_mismatch"
+    assert client.get(BASE).json() == []
+
+    report = finish(client, client.post(BASE, json=body))
+    assert report["snapshot"]["case_set"]["case_set_id"] == saved["case_set_id"]
+    assert report["request"]["cases"][0]["reference_answer"] == ""
+    # Compatibility at read/compare time must not rewrite the immutable version.
+    assert (
+        client.get(BASE + "/case-sets/" + saved["case_set_id"]).json()["cases"] == legacy["cases"]
+    )
+
+
 def test_stop_preserves_results_and_enforces_single_batch(client, monkeypatch):
     async def slow(*args, **kwargs):
         await asyncio.Event().wait()

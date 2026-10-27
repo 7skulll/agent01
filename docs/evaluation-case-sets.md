@@ -1,152 +1,78 @@
-# RAG 测评集清单与整理结果
+# 测评集使用与当前快照
 
-更新：2026-10-26，包含同日的 CRUD 语料主题拆分。数据来自当前业务库的 `evaluation_case_sets`。
+更新：2026-10-27。本页记录本地已有数据的日期快照；换环境或继续修改数据库后，
+应重新导出核对，不把此处数量当作实时状态。
 
-## CRUD 主题拆分（2026-10-26）
+## 选择与维护
 
-`CRUD-RAG-60-v1` 原来把 60 道题的配套新闻与 100 篇无关事件新闻放在同一个库，跨领域检索的
-精度和可解释性都差。现在按新闻领域拆成 7 个知识库，原库归档、文件全部迁出：
+在「检索调试 → RAG 评测」选择知识库，载入对应案例集版本。
+开发集用于迭代；验收集用于固定条件复核。`verified`、`frozen` 是保存状态，
+不表示已完成业务人员签收。冻结前需完整标注、核对语料和所有有答案题的必要证据。
 
-| 知识库 | 文档 | 切片 | 案例 |
-| --- | ---: | ---: | ---: |
-| `CRUD-国际时事` | 57 | 101 | 15 |
-| `CRUD-金融与产业经济` | 55 | 92 | 17 |
-| `CRUD-社会民生与文体` | 44 | 92 | 10 |
-| `CRUD-政务与法治` | 33 | 68 | 7 |
-| `CRUD-生态环保与水利` | 18 | 30 | 7 |
-| `CRUD-科技与数字产业` | 7 | 12 | 2 |
-| `CRUD-农业与乡村振兴` | 6 | 8 | 2 |
-
-合计 220 篇文档、403 个切片、60 道题，与拆分前一致；向量与全文索引随文件迁移，不需要重建。
-
-规则与复现：
-
-- 工具：`scripts/split_crud_knowledge_base.py`，`plan` 预演、`apply --apply` 写入、`verify` 复核。
-- 主题按首段关键词判定，人工复核的例外记在脚本的 `OVERRIDES` 里。
-- 案例主题取证据文档的多数票，文档归属再取引用它的案例的多数票，因此每道题的证据文档
-  一定与案例同库。有 7 篇文档因此被带进了另一主题的库，这是有意的取舍。
-- 旧测评集（4 个批次的 development 与 `CRUD-Acceptance-v1`）已合并重建为每个库两套：
-  `CRUD-Development-v1`（partial、draft）与 `CRUD-Acceptance-v1`（full、verified + frozen）。
-  原记录只归档不删除，历史评测仍可按 ID 读取。
-- 本次导出：[case-sets.json](../evals/case-sets/2026-10-26-topic-split/case-sets.json)、
-  [summary.csv](../evals/case-sets/2026-10-26-topic-split/summary.csv)。
-
-拆分后的实际影响需要重新跑一次基线：文档数从 220 降到 6–57，precision 会明显变化，
-与拆分前的历史结果不可直接比较。
-
-## 当前结论
-
-- **24 条测评集记录**，分布在 **10 个知识库**；其中 **15 条未归档**、9 条已归档。
-- 未归档记录覆盖合成语料 3 套、CRUD 主题库 12 套。
-- 已归档的 9 条：`CRUD-RAG-reviewed-v1` 四批、`CRUD-RAG-60-v1` 拆分前的四个开发批与
-  `CRUD-Acceptance-v1`。`CRUD-RAG-60-v1` 已清空并归档，`CRUD-RAG-reviewed-v1` 本就归档。
-- 验收集：`Synthetic-Acceptance-v1`（15 题），以及各主题库重建的 `CRUD-Acceptance-v1`（1–7 题）。
-- 下表的「主从关系」是拆分前的状态，保留作历史对照。
-
-导出与审计（拆分前快照 12 条记录）：
-
-- [case-sets.json](../evals/case-sets/2026-10-26/case-sets.json)：完整案例、语料、指纹、引用数和 `archived` 状态。
-- [summary.csv](../evals/case-sets/2026-10-26/summary.csv)：一行一套的汇总表。
-
-重新导出：
+案例集绑定文件 ID 与内容哈希，不能跨环境直接复用。新增、删除或修改资料后，
+应重新审核并保存版本；不要仅替换哈希绕过 `case_set_stale`。
+历史版本和评测通过归档保留，页面可勾选「显示已归档」。
 
 ```bash
-uv run python -m scripts.export_evaluation_case_sets --output 目标目录
+uv run python -m scripts.export_evaluation_case_sets --output evals/case-sets/本次快照
 ```
 
-## 主从关系（拆分前）
+导出包含环境绑定的案例与语料信息，提交前检查内容。导入新 CRUD 数据的流程见
+[数据接入](../evals/crud-rag/README.md)；初次导入仍是 draft、partial，后续审核状态另行维护。
 
-| 用途 | 测评集 | 状态 |
+## CRUD 当前快照
+
+七个主题库合计 220 篇资料、403 个切片。当前审核覆盖十二个活动案例集版本、60 道题：
+59 道有答案，1 道应拒答。全部已做完整标注、证据核对并保存为 verified、frozen。
+旧 `CRUD-RAG-60-v1` 和 `CRUD-RAG-reviewed-v1` 已归档，不进入本次统计。
+
+| 主题库 | 拆分 | 版本 | 题数 | 通过 / 部分 / 不通过 |
+|---|---|---|---:|---|
+| 农业与乡村振兴 | development | v3 | 2 | 2 / 0 / 0 |
+| 国际时事 | acceptance | v3 | 6 | 4 / 1 / 1 |
+| 国际时事 | development | v2 | 9 | 9 / 0 / 0 |
+| 政务与法治 | acceptance | v2 | 1 | 1 / 0 / 0 |
+| 政务与法治 | development | v2 | 6 | 6 / 0 / 0 |
+| 生态环保与水利 | acceptance | v2 | 2 | 2 / 0 / 0 |
+| 生态环保与水利 | development | v3 | 5 | 4 / 1 / 0 |
+| 社会民生与文体 | acceptance | v2 | 2 | 2 / 0 / 0 |
+| 社会民生与文体 | development | v2 | 8 | 7 / 0 / 1 |
+| 科技与数字产业 | development | v3 | 2 | 2 / 0 / 0 |
+| 金融与产业经济 | acceptance | v2 | 7 | 7 / 0 / 0 |
+| 金融与产业经济 | development | v2 | 10 | 8 / 1 / 1 |
+
+活动题合计 **54 通过、3 部分通过、3 不通过**，严格通过率为 54/60（90%）。
+这是已有的 Codex 代审记录，依据实际回答、实际上下文和原文；本次文档整理没有重新运行模型或审核。
+RAGAS 本轮未启用，其自动评分保持未评分。
+
+运行采用混合检索、K=5、当时生效的 4096 输出预算。初次有六题未生成最终回答，
+使用原有重试机制后成功；四个最终运行中有 21 条结果复用父运行，不能另算独立样本。
+59 道有答案题的平均 Precision@5 为 0.451，Recall@5、Hit@5、MRR@5 均为 1.000。
+固定 K 分母与文件去重口径见 [指标说明](evaluation-metrics.md)；这些数值不代表答案正确率。
+唯一应拒答题正确拒答，但该样本量不能说明一般拒答能力。
+
+可提交的[审计摘要](../evals/results/crud-review-2026-10-27.json)保留案例集版本、实验 ID、
+快照指纹、计分分母与重试复用数量。原始问答、语料及逐题审核快照保存在本地
+`output/reviews/current-20261027/`，未纳入本次 Git 提交；摘要无法替代逐题原始证据。
+
+## 待优化的六题
+
+| 主题库 / 集合 / 题号（从 1 开始） | 审核 | 现有诊断 |
 |---|---|---|
-| 开发检索基线 | `Synthetic-Retrieval-Baseline-20` | 20 题，full，draft |
-| RAGAS 冒烟 | `RAGAS-smoke-e429` | 1 题，full，draft |
-| 合成小样本验收 | `Synthetic-Acceptance-v1` | 15 题，verified + frozen |
-| CRUD 开发批 | `CRUD-RAG-60-v1` 的 3 个 development 批 | 42 题，partial，draft，**已归档** |
-| CRUD 验收集 | `CRUD-Acceptance-v1`（60-v1 内） | 18 题，full，verified + frozen，**已归档** |
-| CRUD 主题库 | 7 个 `CRUD-*` 库的 `CRUD-Development-v1` | 42 题，partial，draft |
-| CRUD 主题库 | 5 个 `CRUD-*` 库的 `CRUD-Acceptance-v1` | 18 题，full，verified + frozen |
-| CRUD 历史副本 | `CRUD-RAG-reviewed-v1` 四批 | 59 题，**已归档** |
-| 旧 CRUD 验收批 | `CRUD-22-b199fb28-acceptance-1`（60-v1 内） | 18 题，**已归档** |
+| 国际时事 / acceptance / 2 | 部分 | 已回答收复面积，漏掉继续进攻方向；组装上下文缺少后一句 |
+| 国际时事 / acceptance / 3 | 不通过 | 上下文已有领导人交流与相关报道，却返回资料不足 |
+| 生态环保与水利 / development / 4 | 部分 | 漏掉健康及社会经济风险，对应原句未进入上下文 |
+| 社会民生与文体 / development / 4 | 不通过 | 对警车驾驶员和微博致谢问题完全拒答，已有线索足以回答部分内容 |
+| 金融与产业经济 / development / 3 | 部分 | 漏掉减产及库存因素，对应段落未进入上下文 |
+| 金融与产业经济 / development / 8 | 不通过 | 上下文已有住房政策与央行支持信息仍完全拒答，部分北京资料被截断 |
 
-## 新增验收集
+优先检查上下文抽取、预算分配及有证据时的拒答行为，再使用同一冻结版本比较检索模式与重排。
+实验对比的失败题评分仍有实现差异，使用回归门禁前先阅读
+[当前对比限制](evaluation-metrics.md#当前实验对比限制)。
 
-### `Synthetic-Acceptance-v1`
+## 使用边界
 
-- 10 道有答案题，覆盖 E429、E401、ZX-314、2026 采购审批、外包年假、定制退款、数据库备份、加班餐费、增值税发票、入职设备。
-- 5 道应拒答题：子女教育补贴、ZX-999 防水等级、2024 营业收入、远程办公额度、食堂午餐时间。
-- 10 道有答案题全部带 `evidence_groups`。
-- `split=acceptance`、`review_status=verified`、`frozen=true`。
-
-### `CRUD-Acceptance-v1`
-
-- 来源：原 `CRUD-22-b199fb28-acceptance-1` 的 18 题。
-- 标注范围从 `partial` 改为 `full`。
-- 18 道题全部补了必要证据，引文与文件内容哈希已程序化核对。
-- `split=acceptance`、`review_status=verified`、`frozen=true`。
-- 旧 acceptance 批已归档，避免两个验收版本混淆。
-
-**说明**：两套验收集的 `verified` 是程序化核验（引文能在对应文件切片中精确匹配、文件哈希一致），不是业务同事的人工签收。正式业务验收前仍建议人工复核。
-
-## 实测结果
-
-### `Synthetic-Acceptance-v1` · 仅检索
-
-- 15 题全部完成，0 失败。
-- precision@5 **20.0%**，recall@5 **100%**，hit@5 **100%**，MRR@5 **100%**，nDCG@5 **100%**。
-- 10 道有答案题证据覆盖全部有效。
-
-### `Synthetic-Acceptance-v1` · 完整 RAG
-
-- 15 题全部完成，0 失败。
-- 10 道有答案题全部 answered。
-- 5 道应拒答题全部 `insufficient_evidence`，拒答成功 **5/5**。
-- 无错误拒答。
-
-### `CRUD-Acceptance-v1` · 仅检索
-
-- 18 题全部完成，0 失败。
-- precision@5 **38.9%**，recall@5 **98.1%**，hit@5 **100%**，MRR@5 **97.2%**，nDCG@5 **97.0%**。
-- 18 道题证据覆盖全部有效。
-- 有 1 道题存在相关文件未全部进入前 K 的召回损失，适合作为后续检索优化对象。
-
-### `CRUD-Acceptance-v1` · 完整 RAG
-
-- 18 题中 15 完成、3 失败，失败码均为 `model_response_truncated`。
-- 失败题按零分计入 recall，导致汇总 recall 降到 **83.3%**；这不是检索漏召回，而是回答输出达到 `RAG_LLM_MAX_TOKENS=2048` 的上限。
-- 3 道失败题的检索与证据覆盖本身正常（都有 10 个来源，evidence valid=true）。
-- 建议把回答输出预算提高到 4096 或更高，或缩短长答案；当前配置下长 CRUD 答案会稳定触发截断。
-
-## 归档与只读
-
-- `CRUD-RAG-reviewed-v1` 知识库已归档：默认不出现在选择器；新检索、问答、评测会被 `require_knowledge_base` 拒绝；历史评测仍可查看。
-- `CRUD-RAG-reviewed-v1` 的四条测评集已归档，页面上勾选「显示已归档」可以查看或取消归档。
-- 旧的 CRUD acceptance 批已归档，历史引用为 0。
-
-## 当前缺口
-
-- CRUD 的 3 个 development 批仍是 `partial`，这是开发用途，不参与严格五项指标均值；正式验收请用 `CRUD-Acceptance-v1`。
-- 两套验收集的机器核验不能替代业务人工审核。
-- CRUD 验收集只覆盖 18 道原始 acceptance 题，尚未覆盖完整 60 题。
-- 长答案会触发 `RAG_LLM_MAX_TOKENS=2048` 截断；验收前应确认输出预算足够。
-
-## 相关操作
-
-```bash
-# 导出/审计测评集
-uv run python -m scripts.export_evaluation_case_sets
-
-# 归档重复测评集
-uv run python -m scripts.archive_duplicate_case_sets --apply
-
-# 归档重复知识库
-uv run python -m scripts.archive_duplicate_knowledge_base --apply
-```
-
-页面上的「显示已归档」只影响测评集列表；已归档知识库暂时通过 API/脚本取消归档：
-
-```bash
-curl -X PATCH "$RAG_API_BASE/knowledge-bases/<kb_id>/archive" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"archived": false}'
-```
+开发题已反复用于调试；这次验收题也已被阅读和审核，都不能再宣称严格盲测。
+正式业务验收需独立事件组、业务人员核验与足够的应拒答样本。
+合成测评集及旧 CRUD 导出仍保留在 `evals/case-sets/`、历史实测在 `evals/results/`；
+旧导出只说明对应日期的状态，不再在本文重复列出已失效的活动清单和旧实验结论。

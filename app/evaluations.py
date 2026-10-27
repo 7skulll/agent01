@@ -15,7 +15,7 @@ from app.clock import utc_now
 from app.errors import ChatError
 from app.evaluation_evidence import evidence_report
 from app.evaluation_metrics import case_metrics, judgment_coverage, summarize
-from app.evaluation_models import EvalRequest, Review
+from app.evaluation_models import EvalRequest, Review, cases_equal
 from app.evaluation_quality import generation_summary, quality_summary
 from app.evaluation_ragas import RagasUnavailable
 from app.knowledge_bases import require_knowledge_base
@@ -106,6 +106,17 @@ class EvaluationService:
         row["filter_tag"] = tag
         if not derived:
             return row
+        # Older runs may have stored no IR score after answer generation failed,
+        # even though their completed retrieval result is still available.
+        for result in row["results"]:
+            if (
+                result["status"] == "failed"
+                and result.get("sources")
+                and (result.get("error") or {}).get("code") != "evaluation_inputs_changed"
+            ):
+                result["metrics"] = case_metrics(
+                    result["sources"], result["case"], row["request"]["k"]
+                )
         selected = [r for r in row["results"] if not tag or tag in r["case"].get("tags", [])]
         row["quality"] = quality_summary(selected)
         row["generation"] = generation_summary(selected)
@@ -117,6 +128,7 @@ class EvaluationService:
                     **result,
                     "metrics": case_metrics(result.get("sources", []), result["case"], k)
                     if result["status"] == "completed"
+                    or (result["status"] == "failed" and result.get("metrics") is not None)
                     else None,
                 }
                 for result in selected
@@ -299,7 +311,9 @@ class EvaluationService:
             snapshot = await self.snapshot(body)
             if body.case_set_id:
                 saved = await self.case_set(str(body.case_set_id))
-                if saved["kb_id"] != body.knowledge_base_id or saved["cases"] != request["cases"]:
+                if saved["kb_id"] != body.knowledge_base_id or not cases_equal(
+                    saved["cases"], request["cases"]
+                ):
                     raise ChatError(
                         "case_set_mismatch", "案例内容与所选版本不一致，请另存版本或重新载入。", 409
                     )
@@ -637,6 +651,7 @@ class EvaluationService:
                     result["metrics"] = (
                         case_metrics(result["sources"], case.model_dump(), body.k)
                         if result["status"] == "completed"
+                        or (result["status"] == "failed" and result.get("sources"))
                         else None
                     )
                     result["judgments"] = judgment_coverage(

@@ -221,7 +221,7 @@ def test_report_escapes_user_markdown_and_explains_denominators():
     text = markdown_report(row)
     assert "&lt;script&gt;\\|问题 下一行" in text
     assert "未评分" in text
-    assert "失败计零" in text
+    assert "无可用检索结果的失败题计零" in text
 
 
 def test_unattempted_pending_rows_do_not_require_unknown_call_confirmation():

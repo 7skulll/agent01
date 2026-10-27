@@ -493,7 +493,8 @@ const retrievalScore = (
 ) => {
   if (result.case.expected !== 'answerable' || result.case.judgment_scope === 'partial')
     return '不参与'
-  if (result.status === 'failed') return '失败（计零）'
+  if (result.status === 'failed')
+    return result.metrics ? `${percent(result.metrics[key])}（任务失败）` : '失败（无检索结果，计零）'
   if (result.status !== 'completed') return '—'
   return percent(result.metrics?.[key])
 }
@@ -983,7 +984,9 @@ const maxTime = computed(() => Math.max(1, ...timing.value.map(([, v]) => v)))
         {{ active ? '评测执行中' : busy ? '提交中…' : '一键评测' }}
       </button>
     </template>
-    <p v-else class="small muted">当前知识库还没有测评集；在下方填写案例并保存后，这里会出现一键入口。</p>
+    <p v-else class="small muted">
+      当前知识库还没有测评集；在下方填写案例并保存后，这里会出现一键入口。
+    </p>
   </section>
   <div class="eval-layout">
     <form class="card eval-config" @submit.prevent="start">
@@ -1447,7 +1450,7 @@ const maxTime = computed(() => Math.max(1, ...timing.value.map(([, v]) => v)))
           <p class="small muted">
             指标分母：{{ current.summary.metric_queries }} 道已执行完整有答案标注题（含
             {{ current.summary.labelled_failures }}
-            道失败计零）。部分标注
+            道失败，其中 {{ current.summary.retrieval_scored_failures }} 道保留检索结果；其余失败题无可用检索分数，计零）。部分标注
             {{ current.summary.partial_label_queries || 0 }}
             题；部分、未标注、应拒答和取消题不参与检索质量均值。命中率与 nDCG
             保留在图表数值表中；命中率衡量是否找到至少一个相关文件，不等于答案正确率。
@@ -1465,7 +1468,10 @@ const maxTime = computed(() => Math.max(1, ...timing.value.map(([, v]) => v)))
           :quality="current.quality"
           :generation="current.generation"
         />
-        <details v-if="current.quality" class="card eval-quality-details">
+        <details
+          v-if="current.quality && current.request.kind === 'rag'"
+          class="card eval-quality-details"
+        >
           <summary>人工审核明细与诊断</summary>
           <QualityOverview :quality="current.quality" />
           <LayerDiagnosis
@@ -1509,8 +1515,8 @@ const maxTime = computed(() => Math.max(1, ...timing.value.map(([, v]) => v)))
             >整体拒答成功 {{ current.summary.refusal_correct }}/{{
               current.summary.refusal_attempted ?? current.summary.refusal_total
             }}（含服务失败）</span
-          ><span>人工已评 {{ current.summary.reviewed }}</span
-          ><span v-if="current.quality"
+          ><span v-if="current.request.kind === 'rag'">人工已评 {{ current.summary.reviewed }}</span
+          ><span v-if="current.quality && current.request.kind === 'rag'"
             >人工通过率 {{ formatPercent(current.quality.pass_rate) }}</span
           >
         </div>
@@ -1549,9 +1555,15 @@ const maxTime = computed(() => Math.max(1, ...timing.value.map(([, v]) => v)))
                 <td>{{ retrievalScore(r, 'recall') }}</td>
                 <td>{{ retrievalScore(r, 'mrr') }}</td>
                 <td class="eval-answer-marks">
-                  忠 {{ answerMark(r.review?.unsupported_claims, 'no') }} · 正
-                  {{ answerMark(r.review?.verdict, 'pass') }} · 完
-                  {{ answerMark(r.review?.fact_coverage, 'full') }}
+                  <span v-if="current.request.kind === 'retrieval'">不适用（仅检索）</span>
+                  <span v-else-if="r.status === 'failed' || r.status === 'cancelled'"
+                    >无最终回答</span
+                  >
+                  <span v-else
+                    >忠 {{ answerMark(r.review?.unsupported_claims, 'no') }} · 正
+                    {{ answerMark(r.review?.verdict, 'pass') }} · 完
+                    {{ answerMark(r.review?.fact_coverage, 'full') }}</span
+                  >
                 </td>
                 <td>{{ r.elapsed_ms == null ? '—' : `${r.elapsed_ms} ms` }}</td>
                 <td>{{ tokenCount(r) ?? '—' }}</td>
@@ -1722,7 +1734,10 @@ const maxTime = computed(() => Math.max(1, ...timing.value.map(([, v]) => v)))
               RAGAS LLM-as-judge 分数与人工审核分开保存；缺失的参考答案会使正确性和完整性无法评分。
             </p>
           </section>
-          <fieldset class="eval-review eval-write-controls" :disabled="!canIngest">
+          <p v-if="current.request.kind === 'retrieval'" class="notice">
+            本次为仅检索评测，没有生成回答，答案质量评分不适用。请运行完整 RAG 后审核实际回答。
+          </p>
+          <fieldset v-else class="eval-review eval-write-controls" :disabled="!canIngest">
             <h3>人工答案评价</h3>
             <p class="small muted">系统不把合法引用当作事实支持证明。请结合答案和原文审核。</p>
             <label class="field"

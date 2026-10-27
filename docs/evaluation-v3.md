@@ -1,9 +1,7 @@
 # 同页 RAG 评测第三版
 
-更新：2026-10-26。当前实现为第三版，是评测口径的唯一现行说明。
+更新：2026-10-27。本文说明当前评测流程；计算规则见 [指标口径](evaluation-metrics.md)。
 入口：检索调试页「RAG 评测」标签，或 `/api/v1/evaluations`。
-评测第一版（`evaluation-v1.md`）和第二版规划（`evaluation-v2-plan.md`）的内容已合并到本页并删除原文；
-历史实测 JSON 保留在 `evals/results/`。
 
 ## 目标与边界
 
@@ -19,6 +17,7 @@
 - `file_ids`：可选检索范围；省略为全库，空数组表示不搜索任何文件。
 - `options.rerank`：`inherit` 跟随服务配置，`on` 强制启用，`off` 关闭。
 - `options.context_tokens`：仅完整 RAG 可设置，用于固定上下文预算实验。
+- `options.judge`：默认 `none`；完整 RAG 可选择 `ragas`，需安装独立 worker，会增加模型调用。
 - `idempotency_key`：同一键重复提交相同配置返回原实验，配置不同返回 409。
 - 单次最多 20 题，串行执行；同一时间只允许一个评测任务运行。
 
@@ -34,6 +33,8 @@
 - `relevant_file_ids`：有答案题的正相关文件；应拒答题不应填写。
 - `negative_file_ids`：可选的负相关文件，不能与正相关文件重复。
 - `evidence_groups`：有答案题的必要事实，每组 1–5 个原文锚点（文件、内容哈希、引文、页码）。
+- `required_facts`：供审核对照的必要事实说明。
+- `reference_answer`：可选参考答案，用于人工对照和 RAGAS 参考评分，不进入问答模型输入。
 - `tags`：业务标签，可用于筛选和报告。
 
 有答案标注必须选择相关文件，未标注和应拒答案例不填写相关文件；必要证据必须落在正相关文件内。
@@ -43,7 +44,7 @@
 
 五项指标均以**文件**为单位，先按首次出现顺序去重，再取前 K 个：
 
-- `precision@K`：命中文件数 / K。**文件去重、固定 K 分母、完整标注失败题计零**，
+- `precision@K`：命中文件数 / K。**文件去重、固定 K 分母**，
   不用实际返回数量做分母。
 - `recall@K`：命中文件数 / 标注正相关文件数。
 - `hit@K`：前 K 个文件中是否至少命中一个正相关文件。
@@ -51,7 +52,7 @@
 - `ndcg@K`：按二值相关性计算 DCG / IDCG。
 
 汇总时**完整正相关案例才参与五项质量均值**：只统计 `expected=answerable` 且
-`judgment_scope=full` 的题；已完成和失败题都进入分母，失败题按零分计；
+`judgment_scope=full` 的题；已完成和失败题都进入分母。回答生成失败但保留了检索结果的题按实际检索计分；无可用检索结果的失败题计零；
 `partial`、`unlabelled` 和未执行的题不计入均值。报告会同时给出计分题数、失败数和
 未标注题数，避免用小样本均值暗示总体准确率。
 
@@ -79,10 +80,11 @@
 
 ## 人工审核
 
-每道完成的回答可分别记录总评和五个维度：
+每道完成的回答可分别记录总评和六个维度：
 
 - `fact_coverage`：事实覆盖 full / partial / none。
 - `unsupported_claims`：是否存在无资料支持的表述 yes / no。
+- `answer_relevancy`：回答是否回应问题 relevant / partial / irrelevant。
 - `conditions`：条件、例外和前提是否正确 pass / fail / na。
 - `citation_support`：引用对正文的支持 full / partial / none / na。
 - `refusal`：应拒答题是否正确拒答 correct / incorrect / na。
@@ -115,7 +117,8 @@
 - 完整 RAG 中若失败题可能已产生模型调用，重试必须显式 `confirm_unknown_calls`，
   避免在未知结果上再次计费。
 - `GET /evaluations/compare` 对比两次实验的快照、案例集、逐题指标和回答状态，
-  只有输入一致时才做差值比较。
+  要求同一知识库、运行类型、K、案例集版本、案例标注与范围内语料一致，且实验完整结束；
+  检索模式、重排与上下文参数可作为实验变量。失败题计分差异见 [当前对比限制](evaluation-metrics.md#当前实验对比限制)。
 - 历史支持按知识库、归档状态分页；运行中的实验不能归档或删除。
 - 删除实验会清理其专用会话和检查点，结果不可恢复。
 - `GET /evaluations/{id}/export` 导出 JSON，`GET /evaluations/{id}/report` 生成 Markdown 报告。
@@ -149,8 +152,7 @@ uv run python -m scripts.smoke_evaluation_v3_live
 | [RAGBench](https://arxiv.org/abs/2407.11005) | 检索相关性与回答质量**分层评估**，不把文件命中率称作 faithfulness |
 | [KILT](https://github.com/facebookresearch/KILT#kilt-data-format) | 答案与 provenance 一起保存；这里落为 `evidence_groups` 原文锚点 |
 
-第三版已取代评测第一版和评测第二版规划，两者文档已删除；本页是评测口径的唯一现行说明。
-历史实测 JSON 仍保留在 `evals/results/`，可作为当时版本的证据，但其中数值不代表当前口径。
+历史实测 JSON 保留在 `evals/results/`，可作为当时版本的证据，其中数值不代表当前口径。
 
 ## 已知边界
 

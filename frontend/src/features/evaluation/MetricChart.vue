@@ -93,7 +93,7 @@ const labelled = computed(() => props.curves.some((r) => r.recall !== null))
       <p class="small muted">
         Precision@K=相关文件数/K；Recall@K=相关文件数/标注相关文件总数；MRR@K=第一个命中文件排名的倒数，未命中为
         0；Hit@K=至少命中一个相关文件的题目比例；nDCG@K 按二值相关性计算。K
-        超过实际返回数时以空位补足。失败的有标签题计零，取消和未执行题不计入。
+        超过实际返回数时以空位补足。回答失败但保留检索结果的题按实际检索计分；无可用检索结果的失败题计零。取消和未执行题不计入。
       </p>
     </details>
   </div>

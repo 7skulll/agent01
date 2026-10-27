@@ -10,19 +10,19 @@
     },
     {
       "path": "docs/structured-answer-v2.md",
-      "content_hash": "abadbcbede19c670f1ffed2793d4e9dde580983c84ce98790ca4029ae79eccc3"
+      "content_hash": "24e402f37723766d68b80056cf711eed2c860965a4d84efcfa7e6d83cd16a309"
     },
     {
-      "path": "docs/context-assembly-v1.md",
-      "content_hash": "8bd902791cf8482b3814443a3daed6a21c5cb4facf00a34df2882a31e7aacede"
+      "path": "docs/context-assembly.md",
+      "content_hash": "063772d02659fda6d2b787793987bd6f70677743b699e52dbd0a82bca529fbf7"
     },
     {
       "path": "docs/evaluation-v3.md",
-      "content_hash": "bdc3b55cbd9c2a4eb1cdc4e35edb36139535977a92d8d05b58dc591eb77dc5a4"
+      "content_hash": "c50d91edd33a76752d0d70a12102d65d3bb325f6d801e855c2725f6d5adee6e7"
     },
     {
       "path": "docs/model-settings.md",
-      "content_hash": "2dd9ae9f2917df0ef209723b71c4fd6be5504c646941f11d6e7df74c3e01af57"
+      "content_hash": "a2891f4a6132cce76a2d53105eea518abd97ca1c7683badf3dadfa6f7106b10e"
     }
   ],
   "cases": [
@@ -184,7 +184,7 @@
     },
     {
       "query": "邻居补全最多使用多少资料预算？",
-      "source": "docs/context-assembly-v1.md",
+      "source": "docs/context-assembly.md",
       "quote": "邻居最多消耗资料预算的 20%",
       "split": "development",
       "judgment_scope": "partial",
@@ -197,8 +197,8 @@
     },
     {
       "query": "重叠去重会模糊删除数字或缩进吗？",
-      "source": "docs/context-assembly-v1.md",
-      "quote": "不模糊删除数字、标点或缩进",
+      "source": "docs/context-assembly.md",
+      "quote": "不对数字、标点或缩进做模糊删除",
       "split": "development",
       "judgment_scope": "partial",
       "expected": "answerable",
@@ -209,9 +209,9 @@
       ]
     },
     {
-      "query": "表格和代码会为了预算被随意切断吗？",
-      "source": "docs/context-assembly-v1.md",
-      "quote": "表格、列表和代码保持完整块",
+      "query": "表格超预算时会保留什么结构？",
+      "source": "docs/context-assembly.md",
+      "quote": "只选完整行，强制保留表头",
       "split": "development",
       "judgment_scope": "partial",
       "expected": "answerable",
@@ -223,8 +223,8 @@
     },
     {
       "query": "资料与问题通过什么格式进入最终消息？",
-      "source": "docs/context-assembly-v1.md",
-      "quote": "通过 JSON 序列化承载 evidence 和原始 question",
+      "source": "docs/context-assembly.md",
+      "quote": "用 JSON 承载 `evidence` 和原始 `question`",
       "split": "development",
       "judgment_scope": "partial",
       "expected": "answerable",
@@ -236,7 +236,7 @@
     },
     {
       "query": "失败恢复会使用最新资料重新组装吗？",
-      "source": "docs/context-assembly-v1.md",
+      "source": "docs/context-assembly.md",
       "quote": "不按最新知识库内容重新组装",
       "split": "development",
       "judgment_scope": "partial",
@@ -249,8 +249,8 @@
     },
     {
       "query": "完整请求超预算时先丢历史还是资料？",
-      "source": "docs/context-assembly-v1.md",
-      "quote": "必要时先去除最旧历史、再收缩资料",
+      "source": "docs/context-assembly.md",
+      "quote": "超限时先丢最旧的历史轮",
       "split": "development",
       "judgment_scope": "partial",
       "expected": "answerable",
@@ -276,7 +276,7 @@
     {
       "query": "检索精准率的分母是实际返回数量吗？",
       "source": "docs/evaluation-v3.md",
-      "quote": "文件去重、固定 K 分母、完整标注失败题计零",
+      "quote": "文件去重、固定 K 分母",
       "split": "acceptance",
       "judgment_scope": "partial",
       "expected": "answerable",
