@@ -429,13 +429,26 @@ class EvaluationService:
 
     async def judge_results(self, evaluation_id, results):
         """Add RAGAS semantic scores without changing answers, sources or human reviews."""
-        records, indices = [], []
+        records, indices, started = [], [], []
         for index, result in enumerate(results):
-            if result.get("status") != "completed" or not result.get("run"):
+            if (
+                result.get("status") != "completed"
+                or not result.get("run")
+                or (result.get("judge") and not result.get("judge_error"))
+                or result["case"].get("expected") != "answerable"
+            ):
                 continue
             answer = (result["run"].get("answer") or "").strip()
             contexts = self.judge_contexts(result)
-            if not answer or not contexts:
+            if not answer:
+                result["judge_error"] = "回答为空，RAGAS 无法评分。"
+                result["judge_status"] = "failed"
+                started.append((index, result))
+                continue
+            if not contexts:
+                result["judge_error"] = "没有可用的回答上下文，RAGAS 无法评分。"
+                result["judge_status"] = "failed"
+                started.append((index, result))
                 continue
             case = result["case"]
             reference = (case.get("reference_answer") or "").strip()
@@ -449,34 +462,75 @@ class EvaluationService:
                 }
             )
             indices.append(index)
+            result["judge_status"] = "running"
+            started.append((index, result))
+        if started:
+            await self.save_results(evaluation_id, started)
         if not records:
             return
-        try:
-            scores = await self.app.state.evaluation_judge.score(records)
-            if len(scores) != len(records):
-                raise RagasUnavailable("RAGAS 返回数量与案例不一致。")
-        except Exception as exc:
-            logger.exception("evaluation_judge_failed")
-            message = "RAGAS 评分失败，请检查依赖、模型配置或服务状态。"
-            for index in indices:
-                results[index]["judge_error"] = message
-            await self.save_results(
-                evaluation_id, [(index, results[index]) for index in indices]
-            )
-            logger.warning("evaluation_judge_failed_type=%s", type(exc).__name__)
-            return
-        metadata = getattr(self.app.state.evaluation_judge, "metadata", {}) or {}
-        for index, score in zip(indices, scores, strict=True):
-            results[index]["judge"] = {
-                "provider": "ragas",
-                "judged_at": utc_now(),
-                "ragas_version": metadata.get("ragas_version"),
-                "worker": metadata.get("worker"),
-                **score,
-            }
-        await self.save_results(
-            evaluation_id, [(index, results[index]) for index in indices]
-        )
+
+        async def score_batch(batch, positions):
+            try:
+                scores = await self.app.state.evaluation_judge.score(batch)
+                if len(scores) != len(batch):
+                    raise RagasUnavailable("RAGAS 返回数量与案例不一致。")
+            except Exception as exc:
+                logger.warning("evaluation_judge_failed_type=%s", type(exc).__name__)
+                if len(batch) > 1 and self.app.state.evaluation_judge.available:
+                    # A slow or invalid sample must not erase scores for the rest.
+                    middle = len(batch) // 2
+                    await score_batch(batch[:middle], positions[:middle])
+                    await score_batch(batch[middle:], positions[middle:])
+                    return
+                results[positions[0]]["judge_error"] = (
+                    "RAGAS 评分失败，请检查模型服务、依赖或超时设置。"
+                )
+                results[positions[0]]["judge_status"] = "failed"
+                await self.save_result(evaluation_id, positions[0], results[positions[0]])
+                return
+
+            metadata = getattr(self.app.state.evaluation_judge, "metadata", {}) or {}
+            changed = []
+            for index, record, score in zip(positions, batch, scores, strict=True):
+                raw = score if isinstance(score, dict) else {}
+                values = {
+                    key: raw[key]
+                    if type(raw.get(key)) in (int, float) and 0 <= raw[key] <= 1
+                    else None
+                    for key in (
+                        "faithfulness",
+                        "answer_relevancy",
+                        "answer_correctness",
+                        "completeness",
+                    )
+                }
+                expected = ("faithfulness", "answer_relevancy")
+                if record.get("reference"):
+                    expected += ("answer_correctness", "completeness")
+                if any(value is not None for value in values.values()):
+                    results[index]["judge"] = {
+                        "provider": "ragas",
+                        "judged_at": utc_now(),
+                        "ragas_version": metadata.get("ragas_version"),
+                        "worker": metadata.get("worker"),
+                        "judge_model": metadata.get("judge_model"),
+                        "thinking_mode": metadata.get("thinking_mode"),
+                        "judge_max_tokens": metadata.get("judge_max_tokens"),
+                        **values,
+                    }
+                    if any(values[key] is None for key in expected):
+                        results[index]["judge_error"] = "RAGAS 部分指标未返回分数。"
+                        results[index]["judge_status"] = "partial"
+                    else:
+                        results[index].pop("judge_error", None)
+                        results[index]["judge_status"] = "done"
+                else:
+                    results[index]["judge_error"] = "RAGAS 未返回有效分数。"
+                    results[index]["judge_status"] = "failed"
+                changed.append((index, results[index]))
+            await self.save_results(evaluation_id, changed)
+
+        await score_batch(records, indices)
 
     @complete_on_cancel
     async def start_run(self, evaluation_id, body, case):
@@ -959,6 +1013,10 @@ class EvaluationService:
             for index, result in enumerate(row["results"]):
                 if result["status"] == "running":
                     result["status"] = "cancelled"
+                    changed.append((index, result))
+                elif result.get("judge_status") == "running":
+                    result["judge_status"] = "failed"
+                    result["judge_error"] = "RAGAS 判分因服务重启中断，请重新运行评测。"
                     changed.append((index, result))
             await self.save_results(evaluation_id, changed)
             await self.update(

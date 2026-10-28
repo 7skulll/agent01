@@ -558,7 +558,12 @@ def test_partial_labels_and_evidence_coverage_are_saved_and_exported(client):
     }
     response = client.patch(BASE + "/" + report["evaluation_id"] + "/reviews/0", json=review)
     assert response.status_code == 200, response.text
-    assert response.json()["results"][0]["review"] == review
+    saved = response.json()["results"][0]["review"]
+    assert {key: saved[key] for key in review} == review
+    # A review saved by a signed-in staff account records who judged it and how.
+    assert saved["review_method"] == "human"
+    assert saved["reviewer"]
+    assert saved["reviewed_at"]
     export = client.get(BASE + "/" + report["evaluation_id"] + "/export").json()
     assert export["results"][0]["review"]["conditions"] == "fail"
     assert export["results"][0]["evidence"]["coverage"]["context"] == 1

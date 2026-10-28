@@ -12,6 +12,7 @@ import {
   type CaseSet,
   type HistoryPage,
   type ExperimentOptions,
+  type AnswerReview,
 } from './types'
 import {
   blankCase as blank,
@@ -38,7 +39,7 @@ import SourcePanel from '../../components/SourcePanel.vue'
 const props = defineProps<{ kbId: string }>()
 const client = useQueryClient()
 const mode = ref<Mode>('hybrid'),
-  kind = ref('retrieval'),
+  kind = ref('rag'),
   k = ref(5),
   scoped = ref(false),
   scope = ref<string[]>([])
@@ -49,7 +50,8 @@ const cases = ref<EvalCase[]>([blank()]),
   source = ref<Source | null>(null)
 const id = ref(''),
   importing = ref<HTMLInputElement>()
-const options = ref<ExperimentOptions>({ rerank: 'inherit', context_tokens: null, judge: 'none' })
+const options = ref<ExperimentOptions>({ rerank: 'inherit', context_tokens: null, judge: 'ragas' })
+const judgeChoiceExplicit = ref(false)
 const comparisonEpoch = ref(0)
 const historyOffset = ref(0),
   showArchived = ref(false),
@@ -68,6 +70,8 @@ watch(kind, (value) => {
   if (value !== 'rag') {
     options.value.context_tokens = null
     options.value.judge = 'none'
+  } else if (!judgeChoiceExplicit.value && capabilities.data.value?.ragas_available) {
+    options.value.judge = 'ragas'
   }
 })
 watch(showArchived, () => {
@@ -92,7 +96,9 @@ const capabilities = useQuery({
 watch(
   () => capabilities.data.value?.ragas_available,
   (available) => {
-    if (!available && options.value.judge === 'ragas') options.value.judge = 'none'
+    if (available === false && options.value.judge === 'ragas') options.value.judge = 'none'
+    if (available === true && kind.value === 'rag' && !judgeChoiceExplicit.value)
+      options.value.judge = 'ragas'
   },
 )
 watch(setVerified, (value) => {
@@ -299,8 +305,16 @@ async function runLoadedCaseSet(test: boolean) {
     return
   if (
     kind.value === 'rag' &&
+    options.value.judge === 'ragas' &&
+    !capabilities.data.value?.ragas_available
+  ) {
+    error.value = new Error('RAGAS 暂不可用，请检查自动评分服务后再运行。')
+    return
+  }
+  if (
+    kind.value === 'rag' &&
     !window.confirm(
-      `将使用当前配置运行 ${cases.value.length} 道完整 RAG，可能调用回答模型并产生费用。继续？`,
+      `将运行 ${cases.value.length} 道完整 RAG${options.value.judge === 'ragas' ? '及 RAGAS 自动评分' : ''}，可能产生模型调用费用。继续？`,
     )
   )
     return
@@ -505,6 +519,17 @@ const answerMark = (value: string | undefined, positive: string) => {
   if (value === 'partial') return '部分'
   return '✗'
 }
+// Provenance is shown next to the form: an AI proxy review or a carried review is not a
+// human sign-off, and the difference must stay visible after the review is saved.
+const reviewOrigin = (review?: AnswerReview) => {
+  if (!review?.review_method) return ''
+  const who = [review.reviewer, review.reviewed_at].filter(Boolean).join(' · ')
+  if (review.review_method === 'human') return `人工审核${who ? ` · ${who}` : ''}`
+  if (review.review_method === 'ai_proxy')
+    return `AI 代审${who ? ` · ${who}` : ''} · 非人工签收，导出前请复核`
+  const source = review.carried_from ? `（源自 ${review.carried_from}）` : ''
+  return `沿用同一案例集既往判定${source} · 回答文本与来源运行完全一致${who ? ` · 原审核 ${who}` : ''}`
+}
 watch(
   () => props.kbId,
   () => {
@@ -523,7 +548,13 @@ watch(
     tag.value = ''
     historyOffset.value = 0
     showArchived.value = false
-    options.value = { rerank: 'inherit', context_tokens: null, judge: 'none' }
+    kind.value = 'rag'
+    judgeChoiceExplicit.value = false
+    options.value = {
+      rerank: 'inherit',
+      context_tokens: null,
+      judge: capabilities.data.value?.ragas_available === false ? 'none' : 'ragas',
+    }
     setSplit.value = 'development'
     setVerified.value = false
     setFrozen.value = false
@@ -565,6 +596,7 @@ function loadConfiguration() {
   kind.value = r.request.kind
   mode.value = r.request.mode
   options.value = { rerank: 'inherit', context_tokens: null, judge: 'none', ...r.request.options }
+  judgeChoiceExplicit.value = true
   k.value = r.request.k
   scoped.value = r.request.file_ids !== null
   scope.value = [...(r.request.file_ids || [])]
@@ -975,6 +1007,22 @@ const maxTime = computed(() => Math.max(1, ...timing.value.map(([, v]) => v)))
           </option>
         </select></label
       >
+      <label v-if="kind === 'rag'" class="field"
+        >生成层评分<select
+          v-model="options.judge"
+          :disabled="busy || active"
+          aria-label="快速评测生成层评分"
+          @change="judgeChoiceExplicit = true"
+        >
+          <option value="ragas" :disabled="!capabilities.data.value?.ragas_available">
+            RAGAS 自动评分
+          </option>
+          <option value="none">稍后人工审核</option>
+        </select></label
+      >
+      <p v-if="kind === 'rag' && !capabilities.data.value?.ragas_available" class="small muted">
+        RAGAS 当前不可用；选择人工审核时，本次评测不会自动生成回答质量分数。
+      </p>
       <button
         class="button primary"
         type="button"
@@ -1040,6 +1088,7 @@ const maxTime = computed(() => Math.max(1, ...timing.value.map(([, v]) => v)))
               v-model="options.judge"
               aria-label="生成层评分方式"
               :disabled="busy || active"
+              @change="judgeChoiceExplicit = true"
             >
               <option value="none">人工审核（不自动评分）</option>
               <option value="ragas" :disabled="!capabilities.data.value?.ragas_available">
@@ -1461,6 +1510,18 @@ const maxTime = computed(() => Math.max(1, ...timing.value.map(([, v]) => v)))
           {{ current.generation.errors }} 题。请检查可选依赖、模型配置或服务状态；失败题不会显示为 0
           分。
         </p>
+        <p
+          v-if="
+            current.status === 'running' &&
+            current.request.options?.judge === 'ragas' &&
+            current.results.every((r) => r.status !== 'pending' && r.status !== 'running')
+          "
+          class="notice"
+        >
+          RAGAS 判定中：已完成
+          {{ current.results.filter((r) => r.judge_status && r.judge_status !== 'running').length }}
+          / {{ current.results.filter((r) => r.judge_status).length }} 题；已有结果会分批保存。
+        </p>
         <AnswerQualityChart
           v-if="
             current.quality && (current.request.kind === 'rag' || current.generation?.available)
@@ -1729,6 +1790,9 @@ const maxTime = computed(() => Math.max(1, ...timing.value.map(([, v]) => v)))
             <p v-if="selected.judge?.ragas_version" class="small muted">
               RAGAS {{ selected.judge.ragas_version }} · worker
               {{ selected.judge.worker || 'isolated' }}
+              <span v-if="selected.judge.judge_model"> · {{ selected.judge.judge_model }}</span>
+              <span v-if="selected.judge.thinking_mode === 'disabled'"> · 非思考评审</span>
+              <span v-if="selected.judge.scoring_phase === 'post_run_backfill'"> · 运行后补评</span>
             </p>
             <p class="small muted">
               RAGAS LLM-as-judge 分数与人工审核分开保存；缺失的参考答案会使正确性和完整性无法评分。
@@ -1740,6 +1804,9 @@ const maxTime = computed(() => Math.max(1, ...timing.value.map(([, v]) => v)))
           <fieldset v-else class="eval-review eval-write-controls" :disabled="!canIngest">
             <h3>人工答案评价</h3>
             <p class="small muted">系统不把合法引用当作事实支持证明。请结合答案和原文审核。</p>
+            <p v-if="reviewOrigin(selected.review)" class="small muted" data-testid="review-origin">
+              {{ reviewOrigin(selected.review) }}
+            </p>
             <label class="field"
               >评价<select
                 v-model="dimensions.verdict"

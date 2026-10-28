@@ -119,6 +119,10 @@ class RagasJudge:
                 "api_key": self.settings.llm_api_key.get_secret_value(),
                 "max_tokens": self.settings.llm_max_tokens,
                 "temperature": 0,
+                "disable_thinking": (
+                    self.settings.ragas_disable_thinking
+                    and self.settings.llm_provider == "deepseek"
+                ),
             },
             "embeddings": {
                 "model": self.settings.embedding_model,

@@ -60,7 +60,10 @@ stdout：
     }
   ],
   "ragas_version": "0.2.15",
-  "worker": "tools/ragas-worker"
+  "worker": "tools/ragas-worker",
+  "judge_model": "deepseek-flash",
+  "thinking_mode": "disabled",
+  "judge_max_tokens": 4096
 }
 ```
 
@@ -80,6 +83,8 @@ tools/ragas-worker/worker.py
 ```bash
 RAG_RAGAS_WORKER_COMMAND="/opt/ragas/bin/python /opt/ragas/worker.py"
 RAG_RAGAS_WORKER_TIMEOUT_SECONDS=300
+RAG_RAGAS_DISABLE_THINKING=true
 ```
 
 主服务只会检查 worker 可执行文件是否存在，并通过 `--probe` 确认 ragas 版本。
+使用 DeepSeek 时，RAGAS 默认关闭思考模式以减少判分耗时；这只影响评审模型调用，不改变知识库问答模型的模式。可将 `RAG_RAGAS_DISABLE_THINKING=false` 恢复思考模式。

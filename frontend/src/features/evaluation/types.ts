@@ -101,6 +101,10 @@ export interface AnswerReview {
   citation_support?: string
   refusal?: string
   causes?: string[]
+  reviewer?: string | null
+  reviewed_at?: string | null
+  review_method?: 'human' | 'ai_proxy' | 'carried' | null
+  carried_from?: string | null
 }
 export interface AnswerMetricComparison {
   label: string
@@ -182,12 +186,17 @@ export interface EvalResult {
     judged_at: string
     ragas_version?: string
     worker?: string
+    judge_model?: string
+    thinking_mode?: 'disabled' | 'default'
+    judge_max_tokens?: number
+    scoring_phase?: 'post_run_backfill'
     faithfulness: number | null
     answer_relevancy: number | null
     answer_correctness: number | null
     completeness: number | null
   }
   judge_error?: string
+  judge_status?: 'running' | 'done' | 'partial' | 'failed'
   elapsed_ms?: number
   error?: { code: string; message: string }
   judgments?: {

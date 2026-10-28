@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     # 可选 RAGAS worker：主服务不安装 ragas，通过独立进程返回语义评分。
     ragas_worker_command: str = ""
     ragas_worker_timeout_seconds: float = Field(default=300, gt=0, le=1800)
+    ragas_disable_thinking: bool = True
     retrieval_max_per_file: int = Field(default=20, ge=1, le=20)
     retrieval_neighbor_chunks: int = Field(default=0, ge=0, le=2)
     rag_history_tokens: int = Field(

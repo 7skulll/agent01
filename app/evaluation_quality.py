@@ -59,7 +59,11 @@ def review_metric_score(result, spec):
 
 
 def _answer_metric(eligible, spec):
-    counts = Counter(r.get("review", {}).get(spec["field"], "pending") for r in eligible)
+    # Rows written before a dimension existed have no key at all; they are unaudited,
+    # not "not applicable", so they must be counted as pending instead of vanishing.
+    counts = Counter(
+        r.get("review", {}).get(spec["field"]) or "pending" for r in eligible
+    )
     denominator = sum(counts[value] for value in spec["values"])
     metric = {
         "key": spec["key"],

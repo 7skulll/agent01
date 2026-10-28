@@ -7,6 +7,22 @@ from app.config import Settings
 from app.evaluation_ragas import RagasJudge, RagasUnavailable
 
 
+def test_deepseek_judge_disables_thinking_without_changing_answer_model():
+    settings = Settings(
+        _env_file=None,
+        llm_provider="deepseek",
+        llm_model="deepseek-flash",
+        ragas_disable_thinking=True,
+    )
+    judge = RagasJudge(SimpleNamespace(settings=settings))
+    assert judge._payload([])["llm"]["disable_thinking"] is True
+    assert settings.llm_model == "deepseek-flash"
+
+    other = Settings(_env_file=None, llm_provider="openai", ragas_disable_thinking=True)
+    other_judge = RagasJudge(SimpleNamespace(settings=other))
+    assert other_judge._payload([])["llm"]["disable_thinking"] is False
+
+
 @pytest.mark.parametrize("timeout", [False, True])
 def test_worker_is_killed_and_reaped_on_cancel_or_timeout(monkeypatch, timeout):
     async def scenario():

@@ -6,11 +6,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response
 
+from app.clock import utc_now
 from app.errors import ChatError
 from app.evaluation_comparison import compare
 from app.evaluation_models import ArchiveRequest, CaseSetRequest, EvalRequest, RetryRequest, Review
 from app.evaluation_quality import markdown_report
-from app.users import require_staff
+from app.users import User, require_staff
 
 router = APIRouter(prefix="/api/v1/evaluations", tags=["evaluations"])
 
@@ -165,9 +166,15 @@ async def stop_evaluation(evaluation_id: UUID, request: Request):
 
 
 @router.patch(
-    "/{evaluation_id}/reviews/{index}", dependencies=[Depends(require_staff)]
+    "/{evaluation_id}/reviews/{index}",
 )
-async def review_evaluation(evaluation_id: UUID, index: int, body: Review, request: Request):
+async def review_evaluation(
+    evaluation_id: UUID,
+    index: int,
+    body: Review,
+    request: Request,
+    user: User = Depends(require_staff),
+):
     service = request.app.state.evaluations
     async with service.lock:
         row = await service.stored(str(evaluation_id))
@@ -175,7 +182,24 @@ async def review_evaluation(evaluation_id: UUID, index: int, body: Review, reque
             raise ChatError("evaluation_busy", "请在评测结束后保存人工评价。", 409)
         if not 0 <= index < len(row["results"]):
             raise ChatError("case_not_found", "案例不存在。", 404)
-        await service.patch_result(str(evaluation_id), index, {"review": body.model_dump()})
+        payload = body.model_dump()
+        existing = row["results"][index].get("review") or {}
+        if body.review_method is None:
+            # Saved from the workbench by a signed-in staff account: who and when are facts,
+            # and a human edit supersedes any carried link to an earlier run.
+            payload.update(
+                review_method="human",
+                reviewer=user.display_name or user.username,
+                reviewed_at=utc_now(),
+                carried_from=None,
+            )
+        else:
+            # Provenance survives an edit that only touches judgments: a carried or proxy
+            # review must not silently become a human sign-off because the form omitted it.
+            for key in ("reviewer", "reviewed_at", "carried_from"):
+                if payload.get(key) is None:
+                    payload[key] = existing.get(key)
+        await service.patch_result(str(evaluation_id), index, {"review": payload})
     return await service.row(str(evaluation_id))
 
 

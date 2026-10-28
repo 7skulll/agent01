@@ -144,3 +144,9 @@ class Review(BaseModel):
             "annotation_gap", "parsing", "retrieval", "rerank", "assembly", "generation", "unknown"
         ]
     ] = Field(default_factory=list, max_length=7)
+    # Provenance: an AI proxy review or a review carried over from an earlier run of the
+    # same case set is never the same evidence as a person signing off on this answer.
+    reviewer: str | None = Field(default=None, max_length=120)
+    reviewed_at: str | None = Field(default=None, max_length=40)
+    review_method: Literal["human", "ai_proxy", "carried"] | None = None
+    carried_from: str | None = Field(default=None, max_length=80)

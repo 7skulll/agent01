@@ -35,7 +35,7 @@ const ragasDefinitions: Record<string, string> = {
   faithfulness: 'RAGAS 判断回答中的结论是否由检索上下文支持。',
   answer_relevancy: 'RAGAS 判断回答是否直接回应问题，而不是答非所问。',
   answer_correctness: 'RAGAS 结合参考答案判断事实正确性；需要参考答案。',
-  completeness: 'RAGAS LLM 评审判断回答是否覆盖参考答案中的全部必要事实。',
+  completeness: '自定义 RAGAS AspectCritic 对照参考答案判断必要事实是否完整覆盖，输出二值分数。',
 }
 const source = ref<'human' | 'ragas'>('human')
 watch(
@@ -97,7 +97,7 @@ const detail = (metric: DisplayMetric) => {
         <h2>生成层指标</h2>
         <p class="small muted">
           与检索层分开观察。RAGAS 用 LLM-as-judge
-          做语义评分；人工审核是严格二值判定。两者都保留原始记录，不互相覆盖。
+          做语义评分，当前使用工作空间配置的回答模型；人工审核是独立的严格二值判定。两者都保留原始记录，不互相覆盖。
         </p>
       </div>
       <div

@@ -227,3 +227,21 @@ def test_report_escapes_user_markdown_and_explains_denominators():
 def test_unattempted_pending_rows_do_not_require_unknown_call_confirmation():
     row = {"request": {"kind": "rag", "cases": [{}]}, "results": [{"status": "pending"}]}
     assert EvaluationService.retry_plan(row)["unknown_indices"] == []
+
+
+def test_missing_review_dimension_counts_as_pending_not_as_judged():
+    # Rows stored before a dimension existed have no key at all; they must show up as
+    # unaudited, otherwise the "pending" badge understates the remaining review work.
+    legacy = {
+        "status": "completed",
+        "run": {"answer": "回答"},
+        "review": {"verdict": "pass", "fact_coverage": "full"},
+    }
+    quality = quality_summary([legacy])
+    relevancy = quality["metrics"]["answer_relevancy"]
+    assert relevancy["denominator"] == 0
+    assert relevancy["value"] is None
+    assert relevancy["pending"] == 1
+    faithfulness = quality["metrics"]["faithfulness"]
+    assert faithfulness["pending"] == 1
+    assert faithfulness["denominator"] == 0

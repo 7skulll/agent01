@@ -46,6 +46,9 @@ def score_rows(result):
 def build_models(config):
     from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
+    llm_options = {}
+    if config["llm"].get("disable_thinking"):
+        llm_options["extra_body"] = {"thinking": {"type": "disabled"}}
     llm = ChatOpenAI(
         model=config["llm"]["model"],
         api_key=config["llm"]["api_key"],
@@ -53,6 +56,7 @@ def build_models(config):
         temperature=config["llm"].get("temperature", 0),
         max_tokens=config["llm"].get("max_tokens", 1024),
         max_retries=0,
+        **llm_options,
     )
     embeddings = OpenAIEmbeddings(
         model=config["embeddings"]["model"],
@@ -136,6 +140,9 @@ def evaluate_payload(payload):
         "scores": output,
         "ragas_version": getattr(ragas, "__version__", "unknown"),
         "worker": "tools/ragas-worker",
+        "judge_model": payload["llm"]["model"],
+        "thinking_mode": "disabled" if payload["llm"].get("disable_thinking") else "default",
+        "judge_max_tokens": payload["llm"].get("max_tokens"),
     }
 
 

@@ -15,7 +15,7 @@ const labels: Record<string, string> = {
   <section class="card eval-quality">
     <h2>回答质量总览 · 人工审核</h2>
     <p class="small muted">
-      仅统计完成的完整 RAG；未审核、不适用和服务失败不会当作通过。原文覆盖与语义质量分别观察。
+      仅统计本次评测中已完成的完整 RAG 回答。重新运行产生的新回答需要重新审核；未审核、不适用和服务失败不会当作通过。
     </p>
     <div
       v-for="(value, key) in quality.dimensions"
