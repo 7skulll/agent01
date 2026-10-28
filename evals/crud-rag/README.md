@@ -164,7 +164,10 @@ uv run python -m scripts.split_crud_knowledge_base verify  # 复核证据文档�
   在同一个事务里更新，向量与全文索引随文件走，不需要重建，也不产生新增模型费用。
 - 案例主题取证据文档多数票，所以每道题的证据一定与案例同库；有 7 篇文档因此被带进了
   另一主题的库。
-- 每个主题库各有 `CRUD-Development-v1`（partial、draft）与 `CRUD-Acceptance-v1`
-  （full、verified + frozen，仅 5 个库有验收题）。拆分前的记录只归档不删除。
+- 拆分时每个主题库各保存了 `CRUD-Development-v1`（partial、draft）与 `CRUD-Acceptance-v1`
+  （full、verified + frozen，仅 5 个库有验收题）。后续人工审核又把活动版本推到
+  `v2`/`v3` 共十二个冻结版本，并覆盖全部 7 个库；当前清单与题数见
+  [测评集快照](../../docs/evaluation-case-sets.md)，不要以本段 v1 版本号为准。
+  拆分前的记录只归档不删除。
 - 拆分后文档规模从 220 降到 6–57，拆分前的 precision/recall 与新库结果不可直接比较，
   需要重新跑基线。

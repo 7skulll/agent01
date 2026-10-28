@@ -141,6 +141,25 @@
 - 删除实验会清理其专用会话和检查点，结果不可恢复。
 - `GET /evaluations/{id}/export` 导出 JSON，`GET /evaluations/{id}/report` 生成 Markdown 报告。
 
+## 回归门禁
+
+`GET /evaluations/gate?baseline=<id>&candidate=<id>` 把两次实验的配对差值转成可判定的检查项，
+判定规则与 [指标口径](evaluation-metrics.md) 一致：
+
+| 检查项 | 来源 | 默认允许下降 | 查询参数 |
+|---|---|---:|---|
+| 召回率 | 检索层 | 2 个百分点 | `max_recall_drop=0.02` |
+| MRR | 检索层 | 2 个百分点 | `max_mrr_drop=0.02` |
+| 忠实度、答案相关性、正确性、完整性 | 生成层 | 5 个百分点 | `max_answer_drop=0.05` |
+
+每项按 `delta >= -max_drop` 判 `pass`，否则 `fail`；该项无可比数据时为 `unscored`。
+整体状态取最差：任一 `fail` 即 `fail`，否则任一 `unscored` 即 `unscored`，全部通过才 `pass`。
+**`unscored` 不等于通过**，报告会列出每项的来源、差值和阈值。
+
+门禁复用 `compare()` 的兼容性校验，知识库、运行方式、K、案例集版本、语料或标注不一致时
+直接返回 409，不做跨实验推断。仓库没有 CI 配置，门禁目前只能在页面或手动调用接口触发。
+失败题的口径差异见 [当前对比限制](evaluation-metrics.md#当前实验对比限制)。
+
 ## 操作与复现
 
 界面流程：选择知识库 → 勾选文件与模式 → 添加或载入案例 → 标注正/负相关与必要证据
@@ -171,6 +190,7 @@ uv run python -m scripts.smoke_evaluation_v3_live
 | [KILT](https://github.com/facebookresearch/KILT#kilt-data-format) | 答案与 provenance 一起保存；这里落为 `evidence_groups` 原文锚点 |
 
 历史实测 JSON 保留在 `evals/results/`，可作为当时版本的证据，其中数值不代表当前口径。
+`evals/results/` 只保留原始 JSON 证据；由它渲染的 Markdown 报告已删除，需要时从 JSON 重新生成。
 
 ## 已知边界
 

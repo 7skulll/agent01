@@ -33,7 +33,8 @@
 
 辅助说明见 [前端 README](../frontend/README.md)、[CRUD-RAG 数据接入](../evals/crud-rag/README.md)、
 [案例草稿](../evals/cases/README.md)、[RAGAS worker](../tools/ragas-worker/README.md)。
-`evals/results/` 下的 JSON/Markdown 是**历史实验证据**，不是现行口径说明。
+`evals/results/` 下的 JSON 是**历史实验证据**，不是现行口径说明；其中的 Markdown 渲染报告已删除，
+需要时从对应 JSON 重新生成。
 
 ## 未实施
 
@@ -43,7 +44,8 @@
    54 通过、3 部分通过、3 不通过；这是依据实际回答、上下文和原文进行的 Codex 代审，
    不等于业务人员签收。审核人、时间与方法字段已落地（`reviewer` / `reviewed_at` /
    `review_method` / `carried_from`），代审记录标记为 `ai_proxy`，登录员工在工作台保存为 `human`；
-   但待审核队列导航与审核表批量导入导出仍缺失。
+   批量导入已有 `scripts/import_reviews.py`（按答案哈希校验）与 `scripts/carry_reviews.py`
+   （同案例集、答案逐字一致才沿用），但**待审核队列导航与页面内的审核表导入导出仍缺失**。
    数据范围和复用结果说明见 [测评集清单](evaluation-case-sets.md)。
 2. **回归门禁未接入 CI**。`GET /evaluations/gate` 已可用，但仓库没有任何 CI 配置，
    门禁只能人工在页面触发。
